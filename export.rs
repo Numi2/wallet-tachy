@@ -1,23 +1,10 @@
 // export.rs
-//
+//wallet capsule for tachyon-style wallets 
 // Single-file reference implementation of a "Recovery Capsule" for Tachyon-style wallets.
 // It exports an encrypted, integrity-checked, threshold-recoverable snapshot of wallet state,
-// and supports recovery using any t-of-n combination of shares from guardians, a device factor,
+// and supports recovery using any t(habit)-of-n(uman) combination of shares from guardians, a device factor,
 // and an optional passphrase factor.
-//
-// Build hint (add these to Cargo.toml):
-// [dependencies]
-// blake3 = "1"
-// chacha20poly1305 = { version = "0.10", features = ["std", "xchacha20"] }
-// hkdf = "0.12"
-// sha2 = "0.10"
-// rand = "0.8"
-// rand_core = "0.6"
-// x25519-dalek = { version = "2", features = ["static_secrets"] }
-// argon2 = "0.5"
-// serde = { version = "1.0", features = ["derive"] }
-// serde_cbor = "0.11"
-// thiserror = "1.0"
+// Numan Thabiiiiiiit
 
 use argon2::{password_hash::SaltString, Argon2, PasswordHasher};
 use blake3::Hasher as Blake3;

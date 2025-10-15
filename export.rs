@@ -19,6 +19,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519Secret};
 
+pub mod tachystamps;
+
 // ----------------------------- Errors -----------------------------
 
 #[derive(Debug, Error)]
@@ -708,8 +710,7 @@ mod tests {
         let mut keys = HashMap::new();
         keys.insert("g1".into(), *g1_sk.to_bytes());
         let rec1 = recover_capsule(RecoveryInputs {
-            capsule_bytes: &c
-apsule,
+            capsule_bytes: &capsule,
             guardian_keys: keys.clone(),
             passphrase: None,
             device_key: Some(&device_key),

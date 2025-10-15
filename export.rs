@@ -1,5 +1,5 @@
 // export.rs
-//wallet capsule for tachyon-style wallets 
+//wallet capsule as a solution for revovery
 // Single-file reference implementation of a "Recovery Capsule" for Tachyon-style wallets.
 // It exports an encrypted, integrity-checked, threshold-recoverable snapshot of wallet state,
 // and supports recovery using any t(habit)-of-n(uman) combination of shares from guardians, a device factor,

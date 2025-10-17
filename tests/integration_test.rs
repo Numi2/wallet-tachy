@@ -258,8 +258,9 @@ mod full_flow_tests {
         batch.add_proof(proof1, b"tx1-context".to_vec());
         batch.add_proof(proof2, b"tx2-context".to_vec());
         
-        // Aggregate
-        let aggregate = aggregate_proofs(batch, 42).unwrap();
+        // Use NoopVerifier for testing (production would use CryptographicVerifier)
+        let verifier = NoopVerifier;
+        let aggregate = aggregate_proofs_with_verifier(batch, 42, &verifier).unwrap();
         
         // Verify aggregate structure
         assert_eq!(aggregate.total_actions, 5);

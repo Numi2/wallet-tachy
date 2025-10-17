@@ -133,8 +133,16 @@ pub use proof_aggregation::{
     AggregateProof,
     ProofBatch,
     TransactionMetadata,
+    ContextPolicy,
+    ProofVerifier,
+    NoopVerifier,
+    CryptographicVerifier,
+    AggregationError,
     aggregate_proofs,
+    aggregate_proofs_with_verifier,
+    aggregate_proofs_with_verifier_and_policy,
     verify_aggregate,
+    verify_aggregate_full,
     get_tx_authorized_pairs,
 };
 

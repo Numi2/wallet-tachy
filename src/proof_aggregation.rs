@@ -1,35 +1,8 @@
 //! Tachystamp Proof Aggregation
-//!
-//! Production-grade verification aggregation for Tachyon. This module aggregates
-//! multiple tachystamp proofs into one **verifier-friendly artifact** with:
-//! - Canonical metadata partitioning
-//! - A Merkle commitment over all (cv_net, rk) pairs
-//! - A deterministic aggregate digest binding all included proofs
-//!
-//! This implements the *verification aggregation* migration path:
-//! - It **verifies each individual proof** (via a pluggable `ProofVerifier`)
-//! - It **does not** attempt to fold pre-compressed SNARKs
-//! - It produces a compact, canonical aggregate for block inclusion
-//!
-//! For true IVC aggregation, redesign the step-circuit and run Nova IVC over
-//! witnesses at build time. That requires different architecture and is out of
-//! scope for this module.
-//!
-//! # Security model
-//! - `verify_aggregate_full` re-verifies all underlying proofs and checks that
-//!   the aggregate digest matches. Use this for block validation.
-//! - `verify_aggregate` performs structural checks and commitment validation.
-//!   Use this when the originals are not available; it cannot re-verify proofs.
-//!
-//! # Commitments
-//! - `pairs_root`: Merkle root over all authorized (cv_net, rk) pairs
-//! - `agg_digest`: Aggregate digest binding `aggregate_id`, `pairs_root`,
-//!   and per-proof digests
-//!
-//! # Determinism
-//! - Aggregation is deterministic given input ordering
-//! - Merkle tree is binary, left-balanced with last-leaf duplication for odd levels
+//! attempt by Numan Thabit
 
+
+use blake2b_simd::Params as Blake2bParams;
 use halo2curves::{ff::PrimeField, pasta::Fp as PallasFp};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -37,6 +10,33 @@ use thiserror::Error;
 use crate::tachystamps::{Compressed, ProofMeta, TachyError};
 
 // ----------------------------- Types -----------------------------
+
+/// Policy for computing the context field in merged proof metadata.
+///
+/// The context field can be used to bind additional information into the aggregate.
+#[derive(Clone, Debug)]
+pub enum ContextPolicy {
+    /// Set context to zero (no additional binding)
+    Zero,
+    
+    /// Derive context from the aggregate ID
+    FromAggregateId,
+    
+    /// Combine contexts from all input proofs (using XOR for simplicity)
+    CombineInputContexts,
+    
+    /// Hash all contexts with aggregate metadata
+    HashWithMetadata,
+    
+    /// Use a custom context value
+    Custom(PallasFp),
+}
+
+impl Default for ContextPolicy {
+    fn default() -> Self {
+        ContextPolicy::Zero
+    }
+}
 
 /// An aggregate proof covering multiple transactions
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -189,6 +189,65 @@ impl ProofVerifier for NoopVerifier {
     }
 }
 
+/// Production cryptographic verifier for compressed tachystamp proofs.
+///
+/// This performs full cryptographic verification using Nova's CompressedSNARK
+/// verification. It checks:
+/// - SNARK proof validity
+/// - Correct accumulator transitions
+/// - Public input consistency
+///
+/// Use this for consensus-critical validation in production.
+pub struct CryptographicVerifier {
+    /// Initial public input state for the recursive proof system
+    pub z0: Vec<PallasFp>,
+}
+
+impl CryptographicVerifier {
+    /// Create a new cryptographic verifier with the given initial state.
+    ///
+    /// # Arguments
+    /// - `z0`: Initial public inputs (typically [acc_init, ctx, ...])
+    ///
+    /// # Example
+    /// ```ignore
+    /// let z0 = vec![PallasFp::from(0u64), PallasFp::from(0u64)];
+    /// let verifier = CryptographicVerifier::new(z0);
+    /// ```
+    pub fn new(z0: Vec<PallasFp>) -> Self {
+        Self { z0 }
+    }
+
+    /// Create a verifier with default initial state (zeros).
+    ///
+    /// This is suitable when proofs don't carry specific initial context.
+    pub fn with_default_state() -> Self {
+        Self::new(vec![PallasFp::from(0u64), PallasFp::from(0u64)])
+    }
+}
+
+impl ProofVerifier for CryptographicVerifier {
+    fn verify(&self, proof: &Compressed) -> Result<(), TachyError> {
+        // First do structural checks
+        if proof.proof.is_empty() {
+            return Err(TachyError::InvalidProof("empty proof".into()));
+        }
+        if proof.meta.authorized_pairs.is_empty() {
+            return Err(TachyError::InvalidProof("no authorized pairs".into()));
+        }
+        if proof.vk.is_empty() {
+            return Err(TachyError::InvalidProof("missing verification key".into()));
+        }
+
+        // Perform cryptographic verification via tachystamps module
+        use crate::tachystamps::Prover;
+        
+        Prover::verify(proof, &self.z0)?;
+        
+        Ok(())
+    }
+}
+
 // ----------------------------- Aggregation -----------------------------
 
 /// Aggregate and verify multiple tachystamp proofs using the provided verifier.
@@ -199,10 +258,12 @@ impl ProofVerifier for NoopVerifier {
 /// - `batch`: Collection of proofs + per-tx metadata
 /// - `aggregate_id`: Domain separation for the aggregate
 /// - `verifier`: Pluggable proof verifier
-pub fn aggregate_proofs_with_verifier(
+/// - `context_policy`: How to compute the context field (defaults to Zero)
+pub fn aggregate_proofs_with_verifier_and_policy(
     batch: ProofBatch,
     aggregate_id: u32,
     verifier: &impl ProofVerifier,
+    context_policy: ContextPolicy,
 ) -> Result<AggregateProof, AggregationError> {
     if batch.is_empty() {
         return Err(AggregationError::EmptyBatch);
@@ -244,6 +305,9 @@ pub fn aggregate_proofs_with_verifier(
         .map(|p| p.meta.acc_final)
         .unwrap_or_else(|| PallasFp::from(0u64));
 
+    // Compute context based on policy
+    let ctx = compute_context(&batch.proofs, aggregate_id, &pairs_root, &context_policy);
+
     let merged = Compressed {
         // Store the aggregate digest as the "proof" bytes for binding
         proof: agg_digest.to_vec(),
@@ -253,8 +317,7 @@ pub fn aggregate_proofs_with_verifier(
             steps: steps_sum,
             acc_init,
             acc_final,
-            // You can set a context policy here if desired. We leave zero.
-            ctx: PallasFp::from(0u64),
+            ctx,
             authorized_pairs: all_pairs.clone(),
         },
     };
@@ -268,6 +331,27 @@ pub fn aggregate_proofs_with_verifier(
         agg_digest,
         proof_digests,
     })
+}
+
+/// Aggregate and verify multiple tachystamp proofs using the provided verifier.
+///
+/// This is a convenience wrapper that uses the default context policy (Zero).
+/// For more control over context computation, use `aggregate_proofs_with_verifier_and_policy`.
+///
+/// - `batch`: Collection of proofs + per-tx metadata
+/// - `aggregate_id`: Domain separation for the aggregate
+/// - `verifier`: Pluggable proof verifier
+pub fn aggregate_proofs_with_verifier(
+    batch: ProofBatch,
+    aggregate_id: u32,
+    verifier: &impl ProofVerifier,
+) -> Result<AggregateProof, AggregationError> {
+    aggregate_proofs_with_verifier_and_policy(
+        batch,
+        aggregate_id,
+        verifier,
+        ContextPolicy::default(),
+    )
 }
 
 /// Backwards-compatible wrapper that aggregates without cryptographic verification.
@@ -405,21 +489,84 @@ const DST_NODE: &[u8] = b"tachystamp.node.v1";
 const DST_META: &[u8] = b"tachystamp.meta.v1";
 const DST_PROOF: &[u8] = b"tachystamp.proof.v1";
 const DST_AGG: &[u8] = b"tachystamp.aggregate.v1";
+const DST_CTX: &[u8] = b"tachystamp.context.v1";
+
+/// Compute the context field for merged proof metadata based on the chosen policy.
+fn compute_context(
+    proofs: &[Compressed],
+    aggregate_id: u32,
+    pairs_root: &[u8; 32],
+    policy: &ContextPolicy,
+) -> PallasFp {
+    use halo2curves::ff::Field;
+    
+    match policy {
+        ContextPolicy::Zero => PallasFp::from(0u64),
+        
+        ContextPolicy::FromAggregateId => {
+            // Use aggregate_id directly as context
+            PallasFp::from(aggregate_id as u64)
+        }
+        
+        ContextPolicy::CombineInputContexts => {
+            // XOR all input contexts together
+            let mut combined = PallasFp::from(0u64);
+            for proof in proofs {
+                combined += proof.meta.ctx;
+            }
+            combined
+        }
+        
+        ContextPolicy::HashWithMetadata => {
+            // Hash aggregate_id, pairs_root, and all input contexts using BLAKE2b
+            let mut hasher = Blake2bParams::new()
+                .hash_length(32)
+                .personal(DST_CTX)
+                .to_state();
+            
+            hasher.update(&aggregate_id.to_le_bytes());
+            hasher.update(pairs_root);
+            
+            for proof in proofs {
+                let ctx_bytes = proof.meta.ctx.to_repr();
+                hasher.update(ctx_bytes.as_ref());
+            }
+            
+            let digest = hasher.finalize();
+            let mut bytes = [0u8; 32];
+            bytes.copy_from_slice(digest.as_bytes());
+            
+            PallasFp::from_repr(bytes).unwrap_or_else(|| PallasFp::from(0u64))
+        }
+        
+        ContextPolicy::Custom(value) => *value,
+    }
+}
 
 fn hash_leaf(cv: &[u8; 32], rk: &[u8; 32]) -> [u8; 32] {
-    let mut h = blake3::Hasher::new();
-    h.update(DST_LEAF);
-    h.update(cv);
-    h.update(rk);
-    *h.finalize().as_bytes()
+    let mut hasher = Blake2bParams::new()
+        .hash_length(32)
+        .personal(DST_LEAF)
+        .to_state();
+    hasher.update(cv);
+    hasher.update(rk);
+    let digest = hasher.finalize();
+    let mut result = [0u8; 32];
+    result.copy_from_slice(digest.as_bytes());
+    result
 }
 
 fn hash_node(l: &[u8; 32], r: &[u8; 32]) -> [u8; 32] {
-    let mut h = blake3::Hasher::new();
-    h.update(DST_NODE);
-    h.update(l);
-    h.update(r);
-    *h.finalize().as_bytes()
+    let mut hasher = Blake2bParams::new()
+        .hash_length(32)
+        .personal(DST_NODE)
+        .to_state();
+    hasher.update(l);
+    hasher.update(r);
+    let digest = hasher.finalize();
+    let mut result = [0u8; 32];
+    result.copy_from_slice(digest.as_bytes());
+    result
 }
 
 fn empty_root() -> [u8; 32] {
@@ -456,42 +603,52 @@ fn merkle_root_from_leaves(leaves: &[[u8; 32]]) -> [u8; 32] {
 }
 
 fn digest_meta(meta: &ProofMeta) -> [u8; 32] {
-    let mut h = blake3::Hasher::new();
-    h.update(DST_META);
+    let mut hasher = Blake2bParams::new()
+        .hash_length(32)
+        .personal(DST_META)
+        .to_state();
 
     let steps = (meta.steps as u64).to_le_bytes();
-    h.update(&steps);
+    hasher.update(&steps);
 
     let acc_init = meta.acc_init.to_repr();
     let acc_final = meta.acc_final.to_repr();
     let ctx = meta.ctx.to_repr();
 
-    h.update(acc_init.as_ref());
-    h.update(acc_final.as_ref());
-    h.update(ctx.as_ref());
+    hasher.update(acc_init.as_ref());
+    hasher.update(acc_final.as_ref());
+    hasher.update(ctx.as_ref());
 
     let root = merkle_root_from_pairs(&meta.authorized_pairs);
-    h.update(&root);
+    hasher.update(&root);
 
-    *h.finalize().as_bytes()
+    let digest = hasher.finalize();
+    let mut result = [0u8; 32];
+    result.copy_from_slice(digest.as_bytes());
+    result
 }
 
 fn digest_proof(proof: &Compressed) -> [u8; 32] {
-    let mut h = blake3::Hasher::new();
-    h.update(DST_PROOF);
+    let mut hasher = Blake2bParams::new()
+        .hash_length(32)
+        .personal(DST_PROOF)
+        .to_state();
 
     let plen = (proof.proof.len() as u64).to_le_bytes();
-    h.update(&plen);
-    h.update(&proof.proof);
+    hasher.update(&plen);
+    hasher.update(&proof.proof);
 
     let vklen = (proof.vk.len() as u64).to_le_bytes();
-    h.update(&vklen);
-    h.update(&proof.vk);
+    hasher.update(&vklen);
+    hasher.update(&proof.vk);
 
     let md = digest_meta(&proof.meta);
-    h.update(&md);
+    hasher.update(&md);
 
-    *h.finalize().as_bytes()
+    let digest = hasher.finalize();
+    let mut result = [0u8; 32];
+    result.copy_from_slice(digest.as_bytes());
+    result
 }
 
 fn digest_aggregate_fields(
@@ -499,20 +656,25 @@ fn digest_aggregate_fields(
     pairs_root: [u8; 32],
     proof_digests: &[[u8; 32]],
 ) -> [u8; 32] {
-    let mut h = blake3::Hasher::new();
-    h.update(DST_AGG);
+    let mut hasher = Blake2bParams::new()
+        .hash_length(32)
+        .personal(DST_AGG)
+        .to_state();
 
-    h.update(&aggregate_id.to_le_bytes());
-    h.update(&pairs_root);
+    hasher.update(&aggregate_id.to_le_bytes());
+    hasher.update(&pairs_root);
 
     let n = (proof_digests.len() as u64).to_le_bytes();
-    h.update(&n);
+    hasher.update(&n);
 
     for d in proof_digests {
-        h.update(d);
+        hasher.update(d);
     }
 
-    *h.finalize().as_bytes()
+    let digest = hasher.finalize();
+    let mut result = [0u8; 32];
+    result.copy_from_slice(digest.as_bytes());
+    result
 }
 
 // ----------------------------- Tests -----------------------------
@@ -567,7 +729,7 @@ mod tests {
         batch.add_proof(dummy_compressed(3), b"tx2".to_vec());
         batch.add_proof(dummy_compressed(1), b"tx3".to_vec());
 
-        let aggregate = aggregate_proofs(batch, 42).unwrap();
+        let aggregate = aggregate_proofs_with_verifier(batch, 42, &NoopVerifier).unwrap();
 
         assert_eq!(aggregate.aggregate_id, 42);
         assert_eq!(aggregate.total_actions, 6); // 2 + 3 + 1
@@ -585,7 +747,7 @@ mod tests {
         batch.add_proof(dummy_compressed(2), b"tx1".to_vec());
         batch.add_proof(dummy_compressed(1), b"tx2".to_vec());
 
-        let aggregate = aggregate_proofs(batch, 1).unwrap();
+        let aggregate = aggregate_proofs_with_verifier(batch, 1, &NoopVerifier).unwrap();
 
         let z0 = vec![
             PallasFp::from(0u64),
@@ -601,7 +763,7 @@ mod tests {
         batch.add_proof(dummy_compressed(2), b"tx1".to_vec());
         batch.add_proof(dummy_compressed(3), b"tx2".to_vec());
 
-        let aggregate = aggregate_proofs(batch, 1).unwrap();
+        let aggregate = aggregate_proofs_with_verifier(batch, 1, &NoopVerifier).unwrap();
 
         let tx0_pairs = get_tx_authorized_pairs(&aggregate, 0).unwrap();
         assert_eq!(tx0_pairs.len(), 2);
@@ -616,7 +778,7 @@ mod tests {
     #[test]
     fn test_empty_batch_fails() {
         let batch = ProofBatch::new();
-        assert!(aggregate_proofs(batch, 0).is_err());
+        assert!(aggregate_proofs_with_verifier(batch, 0, &NoopVerifier).is_err());
     }
 
     #[test]
@@ -626,7 +788,7 @@ mod tests {
         batch.add_proof(dummy_compressed(7), b"tx2".to_vec());
         batch.add_proof(dummy_compressed(3), b"tx3".to_vec());
 
-        let aggregate = aggregate_proofs(batch, 1).unwrap();
+        let aggregate = aggregate_proofs_with_verifier(batch, 1, &NoopVerifier).unwrap();
 
         // Check partitioning
         assert_eq!(aggregate.tx_metadata[0].action_start_index, 0);
@@ -656,5 +818,78 @@ mod tests {
 
         // Full verify against originals
         assert!(verify_aggregate_full(&aggregate, &[p1, p2], &NoopVerifier).is_ok());
+    }
+
+    #[test]
+    fn test_context_policies() {
+        // Test different context policies produce different results
+        let p1 = dummy_compressed(2);
+        let p2 = dummy_compressed(1);
+        
+        // Policy: Zero
+        let mut batch = ProofBatch::new();
+        batch.add_proof(p1.clone(), b"tx1".to_vec());
+        batch.add_proof(p2.clone(), b"tx2".to_vec());
+        let agg_zero = aggregate_proofs_with_verifier_and_policy(
+            batch,
+            42,
+            &NoopVerifier,
+            ContextPolicy::Zero,
+        ).unwrap();
+        assert_eq!(agg_zero.merged_proof.meta.ctx, PallasFp::from(0u64));
+
+        // Policy: FromAggregateId
+        let mut batch = ProofBatch::new();
+        batch.add_proof(p1.clone(), b"tx1".to_vec());
+        batch.add_proof(p2.clone(), b"tx2".to_vec());
+        let agg_id = aggregate_proofs_with_verifier_and_policy(
+            batch,
+            42,
+            &NoopVerifier,
+            ContextPolicy::FromAggregateId,
+        ).unwrap();
+        assert_eq!(agg_id.merged_proof.meta.ctx, PallasFp::from(42u64));
+
+        // Policy: Custom
+        let custom_ctx = PallasFp::from(12345u64);
+        let mut batch = ProofBatch::new();
+        batch.add_proof(p1.clone(), b"tx1".to_vec());
+        batch.add_proof(p2.clone(), b"tx2".to_vec());
+        let agg_custom = aggregate_proofs_with_verifier_and_policy(
+            batch,
+            42,
+            &NoopVerifier,
+            ContextPolicy::Custom(custom_ctx),
+        ).unwrap();
+        assert_eq!(agg_custom.merged_proof.meta.ctx, custom_ctx);
+
+        // Policy: CombineInputContexts
+        let mut batch = ProofBatch::new();
+        batch.add_proof(p1.clone(), b"tx1".to_vec());
+        batch.add_proof(p2.clone(), b"tx2".to_vec());
+        let agg_combined = aggregate_proofs_with_verifier_and_policy(
+            batch,
+            42,
+            &NoopVerifier,
+            ContextPolicy::CombineInputContexts,
+        ).unwrap();
+        // Sum of contexts from p1 and p2
+        let expected = p1.meta.ctx + p2.meta.ctx;
+        assert_eq!(agg_combined.merged_proof.meta.ctx, expected);
+
+        // Policy: HashWithMetadata
+        let mut batch = ProofBatch::new();
+        batch.add_proof(p1, b"tx1".to_vec());
+        batch.add_proof(p2, b"tx2".to_vec());
+        let agg_hash = aggregate_proofs_with_verifier_and_policy(
+            batch,
+            42,
+            &NoopVerifier,
+            ContextPolicy::HashWithMetadata,
+        ).unwrap();
+        // Should be deterministic and non-zero
+        assert_ne!(agg_hash.merged_proof.meta.ctx, PallasFp::from(0u64));
+
+        println!("✓ All context policies work correctly");
     }
 }

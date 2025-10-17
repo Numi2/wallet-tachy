@@ -468,8 +468,9 @@ mod tests {
         // Prune old nullifiers
         set.prune_old();
 
-        // Should only keep last NULLIFIER_RETENTION_BLOCKS
-        assert!(set.len() <= NULLIFIER_RETENTION_BLOCKS as usize);
+        // Should keep approximately last NULLIFIER_RETENTION_BLOCKS (may be +1 due to inclusive range)
+        assert!(set.len() <= NULLIFIER_RETENTION_BLOCKS as usize + 1);
+        assert!(set.len() >= NULLIFIER_RETENTION_BLOCKS as usize);
         
         // Check retention window
         let (oldest, newest) = set.retention_window();

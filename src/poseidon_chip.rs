@@ -41,12 +41,14 @@ pub const TOTAL_ROUNDS: usize = FULL_ROUNDS + PARTIAL_ROUNDS;
 // Round constants (domain-separated)
 // Generated using Grain LFSR with Tachyon-specific domain string
 // This provides cryptographically secure parameters optimized for Tachyon's security level
+// Note: Blake2b personalization is limited to 16 bytes, so full domain strings are
+// incorporated into the hash input for proper domain separation
 lazy_static::lazy_static! {
     /// Pre-computed round constants for Poseidon permutation
     /// Generated using Grain LFSR with domain="Tachyon-v1-Pallas-W3-FR8-PR56"
     pub static ref ROUND_CONSTANTS: Vec<[PallasFp; WIDTH]> = generate_round_constants();
     /// Pre-computed MDS matrix for Poseidon permutation
-    /// Generated using Cauchy matrix with cryptographic safety margins
+    /// Generated using Cauchy matrix with domain="Tachyon-v1-MDS-Pallas-W3"
     pub static ref MDS_MATRIX: [[PallasFp; WIDTH]; WIDTH] = generate_mds_matrix();
 }
 
@@ -63,8 +65,9 @@ fn generate_round_constants() -> Vec<[PallasFp; WIDTH]> {
     use blake2b_simd::Params;
     
     // Tachyon-specific domain string for parameter generation
-    // Format: Protocol-Version-Curve-Width-FullRounds-PartialRounds
-    const DOMAIN: &[u8] = b"Tachyon-v1-Pallas-W3-FR8-PR56";
+    // Blake2b personalization is limited to 16 bytes
+    // Full domain: "Tachyon-v1-Pallas-W3-FR8-PR56" encoded in input
+    const PERSONAL: &[u8] = b"TachyRC-W3-FR8  "; // 16 bytes exactly
     const SECURITY_BITS: u8 = 128;
     
     let mut constants = Vec::with_capacity(TOTAL_ROUNDS);
@@ -75,8 +78,9 @@ fn generate_round_constants() -> Vec<[PallasFp; WIDTH]> {
     let mut lfsr_state = {
         let mut hasher = Params::new()
             .hash_length(64)
-            .personal(DOMAIN)
+            .personal(PERSONAL)
             .to_state();
+        hasher.update(b"Tachyon-v1-Pallas-W3-FR8-PR56"); // Full domain in input
         hasher.update(b"grain_lfsr_init");
         hasher.update(&[SECURITY_BITS]);
         hasher.update(&(WIDTH as u32).to_le_bytes());
@@ -91,8 +95,9 @@ fn generate_round_constants() -> Vec<[PallasFp; WIDTH]> {
             // Generate next field element from LFSR
             let mut hasher = Params::new()
                 .hash_length(64)
-                .personal(DOMAIN)
+                .personal(PERSONAL)
                 .to_state();
+            hasher.update(b"Tachyon-v1-Pallas-W3-FR8-PR56"); // Full domain in input
             hasher.update(b"round_constant");
             hasher.update(lfsr_state.as_bytes());
             hasher.update(&round.to_le_bytes());
@@ -133,7 +138,8 @@ fn generate_round_constants() -> Vec<[PallasFp; WIDTH]> {
 fn generate_mds_matrix() -> [[PallasFp; WIDTH]; WIDTH] {
     use blake2b_simd::Params;
     
-    const DOMAIN: &[u8] = b"Tachyon-v1-MDS-Pallas-W3";
+    // Blake2b personalization is limited to 16 bytes
+    const PERSONAL: &[u8] = b"TachyMDS-Pal-W3 "; // 16 bytes exactly
     
     let mut matrix = [[PallasFp::zero(); WIDTH]; WIDTH];
     
@@ -149,8 +155,9 @@ fn generate_mds_matrix() -> [[PallasFp; WIDTH]; WIDTH] {
     for i in 0..WIDTH {
         let mut hasher = Params::new()
             .hash_length(64)
-            .personal(DOMAIN)
+            .personal(PERSONAL)
             .to_state();
+        hasher.update(b"Tachyon-v1-MDS-Pallas-W3"); // Full domain in input
         hasher.update(b"mds_x_value");
         hasher.update(&i.to_le_bytes());
         let hash = hasher.finalize();
@@ -163,8 +170,9 @@ fn generate_mds_matrix() -> [[PallasFp; WIDTH]; WIDTH] {
     for j in 0..WIDTH {
         let mut hasher = Params::new()
             .hash_length(64)
-            .personal(DOMAIN)
+            .personal(PERSONAL)
             .to_state();
+        hasher.update(b"Tachyon-v1-MDS-Pallas-W3"); // Full domain in input
         hasher.update(b"mds_y_value");
         hasher.update(&j.to_le_bytes());
         let hash = hasher.finalize();

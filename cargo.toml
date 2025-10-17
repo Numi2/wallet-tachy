@@ -4,10 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-blake3 = "1"
-chacha20poly1305 = { version = "0.10", features = ["std", "xchacha20"] }
+# Note: Removed blake3 - not zk-friendly. Using Poseidon instead.
+chacha20poly1305 = { version = "0.10", features = ["std"] }
 hkdf = "0.12"
-sha2 = "0.10"
 rand = "0.8"
 rand_core = "0.6"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
@@ -46,7 +45,7 @@ optional = true
 # Serialization for share wrapping (used in export.rs)
 bincode = { version = "2.0.0-rc.3", features = ["serde"] }
 
-# Arkworks for Groth16 circuits used by tachystamps.rs
+# Arkworks for Groth16 circuits & zk-friendly primitives
 ark-std = "0.4"
 ark-ff = "0.4"
 ark-ec = "0.4"
@@ -55,7 +54,20 @@ ark-serialize = "0.4"
 ark-bls12-381 = "0.4"
 ark-groth16 = "0.4"
 ark-r1cs-std = "0.4"
-ark-crypto-primitives = { version = "0.4", default-features = false, features = ["r1cs", "merkle_tree", "crh", "sha256"] }
+ark-crypto-primitives = { version = "0.4", default-features = false, features = ["r1cs", "merkle_tree", "crh"] }
+
+# Pasta curves for Nova (Pallas/Vesta)
+ark-pallas = "0.4"
+ark-vesta = "0.4"
+
+# Poseidon hash - zk-friendly hash function for Zcash Orchard/Tachyon
+poseidon-ark = { version = "0.0.9", features = ["r1cs"] }
+
+# Nova for PCD/recursion over Pasta curves (as per Sean Bowe's vision)
+nova-snark = { version = "0.39", default-features = false }
+
+# RedPallas signatures (RedDSA over Pallas) for tachyactions
+reddsa = "0.5"
 
 [lib]
 name = "tachy_wallet"

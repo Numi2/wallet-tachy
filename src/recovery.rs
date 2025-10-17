@@ -207,30 +207,44 @@ struct KeySchedule {
     k_index: [u8; 32],   // blind locator derivations (optional)
 }
 
-fn derive_keys_from_seed(seed: &[u8; 32]) -> KeySchedule {
+fn derive_keys_from_seed(seed: &[u8; 32]) -> Result<KeySchedule, CapsuleError> {
     let hk = Hkdf::<Sha256>::new(Some(b"tachyon/root"), seed);
     let mut k_state = [0u8; 32];
     let mut k_export = [0u8; 32];
     let mut k_index = [0u8; 32];
-    hk.expand(b"state-log", &mut k_state).unwrap();
-    hk.expand(b"export-aead", &mut k_export).unwrap();
-    hk.expand(b"blind-index", &mut k_index).unwrap();
-    KeySchedule { k_state, k_export, k_index }
+    hk.expand(b"state-log", &mut k_state)
+        .map_err(|e| CapsuleError::KeyDerivation(e.to_string()))?;
+    hk.expand(b"export-aead", &mut k_export)
+        .map_err(|e| CapsuleError::KeyDerivation(e.to_string()))?;
+    hk.expand(b"blind-index", &mut k_index)
+        .map_err(|e| CapsuleError::KeyDerivation(e.to_string()))?;
+    Ok(KeySchedule { k_state, k_export, k_index })
 }
 
-fn k_snap_i(k_export: &[u8; 32], h_i: &[u8; 32]) -> [u8; 32] {
+fn k_snap_i(k_export: &[u8; 32], h_i: &[u8; 32]) -> Result<[u8; 32], CapsuleError> {
     let hk = Hkdf::<Sha256>::new(Some(b"tachyon/snap"), k_export);
     let mut out = [0u8; 32];
-    hk.expand(h_i, &mut out).unwrap();
-    out
+    hk.expand(h_i, &mut out)
+        .map_err(|e| CapsuleError::KeyDerivation(e.to_string()))?;
+    Ok(out)
+}
+
+/// Derive Argon2 secret (pepper) from wallet seed for passphrase-based recovery
+fn derive_argon2_secret(seed: &[u8; 32]) -> Result<[u8; 32], CapsuleError> {
+    let hk = Hkdf::<Sha256>::new(Some(b"tachyon/argon2"), seed);
+    let mut secret = [0u8; 32];
+    hk.expand(b"passphrase-pepper", &mut secret)
+        .map_err(|e| CapsuleError::KeyDerivation(e.to_string()))?;
+    Ok(secret)
 }
 
 // ----------------------------- GF(256) + Shamir -----------------------------
 
 // Minimal Shamir over GF(256) with polynomial mod 0x11b.
 // Secret is 32 bytes. We share bytewise. Share index x ∈ [1..=255].
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 struct ShamirShare {
+    #[zeroize(skip)]
     pub x: u8,
     pub y: [u8; 32], // 32 bytes, one per secret byte
 }
@@ -263,19 +277,20 @@ fn gf_pow(mut a: u8, mut e: u8) -> u8 {
     r
 }
 
-fn gf_inv(a: u8) -> u8 {
+fn gf_inv(a: u8) -> Result<u8, CapsuleError> {
     // a^(255-1) in GF(256) => a^254
+    // In valid Lagrange interpolation, we should never hit zero denominators
     if a == 0 {
-        0
+        Err(CapsuleError::GaloisFieldError)
     } else {
-        gf_pow(a, 254)
+        Ok(gf_pow(a, 254))
     }
 }
 
-fn shamir_split(secret: &[u8; 32], t: u8, n: u8) -> Vec<ShamirShare> {
-    assert!(t >= 1 && t <= n);
-    // Note: n is u8, so n <= 255 is always true (documented for protocol spec)
-    assert!(n >= t); // Safety check
+fn shamir_split(secret: &[u8; 32], t: u8, n: u8) -> Result<Vec<ShamirShare>, CapsuleError> {
+    if t < 1 || t > n || n == 0 {
+        return Err(CapsuleError::BadParams(format!("Invalid Shamir parameters: t={}, n={}", t, n)));
+    }
     let mut rng = rand::thread_rng();
     // For each byte, sample degree-(t-1) polynomial coefficients: a0=secret_byte, a1..a_{t-1} random.
     let mut coeffs: Vec<Vec<u8>> = vec![vec![0u8; t as usize]; 32];
@@ -300,7 +315,7 @@ fn shamir_split(secret: &[u8; 32], t: u8, n: u8) -> Vec<ShamirShare> {
         }
         shares.push(ShamirShare { x, y });
     }
-    shares
+    Ok(shares)
 }
 
 fn shamir_recover(shares: &[ShamirShare], t: u8) -> Result<[u8; 32], CapsuleError> {
@@ -324,7 +339,7 @@ fn shamir_recover(shares: &[ShamirShare], t: u8) -> Result<[u8; 32], CapsuleErro
                 let diff = sj.x ^ xi; // in GF(256) addition == XOR; subtraction == addition
                 den = gf_mul(den, diff);
             }
-            let li = gf_mul(num, gf_inv(den));
+            let li = gf_mul(num, gf_inv(den)?);
             sb ^= gf_mul(yi, li);
         }
         secret[b] = sb;
@@ -396,13 +411,16 @@ pub struct ExportInputs<'a> {
 
 pub fn export_capsule(inputs: ExportInputs) -> Result<Vec<u8>, CapsuleError> {
     // Key schedule
-    let ks = derive_keys_from_seed(inputs.seed);
+    let ks = derive_keys_from_seed(inputs.seed)?;
 
     // Commit state and ratchet
     let state_bytes = serde_cbor::to_vec(inputs.state).map_err(|e| CapsuleError::Ser(e.to_string()))?;
     let state_root = blake3_hash(&state_bytes);
 
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| CapsuleError::BadParams(format!("Invalid system time: {}", e)))?
+        .as_secs();
     let mut ratchet = Blake3::new();
     if let Some(prev) = inputs.prev_h {
         ratchet.update(&prev);
@@ -413,7 +431,7 @@ pub fn export_capsule(inputs: ExportInputs) -> Result<Vec<u8>, CapsuleError> {
     let h_i = ratchet.finalize().as_bytes().clone();
 
     // Snapshot key and AEAD
-    let k_snap = k_snap_i(&ks.k_export, &h_i);
+    let k_snap = k_snap_i(&ks.k_export, &h_i)?;
     let aead = XChaCha20Poly1305::new((&k_snap).into());
     let mut nonce = [0u8; 24];
     OsRng.fill_bytes(&mut nonce);
@@ -439,19 +457,20 @@ pub fn export_capsule(inputs: ExportInputs) -> Result<Vec<u8>, CapsuleError> {
             &XNonce::from(nonce),
             chacha20poly1305::aead::Payload { msg: &state_bytes, aad: &aad },
         )
-        .map_err(|_| CapsuleError::Decrypt)?;
+        .map_err(|_| CapsuleError::Encrypt)?;
 
     // Shamir splits of k_snap 
     let mut total_n = inputs.policy.guardians.len() as u8;
     if inputs.policy.include_device { total_n += 1; }
     if inputs.policy.include_passphrase { total_n += 1; }
-    let shares = shamir_split(&k_snap, inputs.policy.threshold, total_n);
+    let shares = shamir_split(&k_snap, inputs.policy.threshold, total_n)?;
     let mut sh_iter = shares.into_iter();
 
     // Assign shares
     let mut guardian_shares = Vec::new();
     for g in &inputs.policy.guardians {
-        let share = sh_iter.next().expect("enough shares");
+        let share = sh_iter.next()
+            .ok_or_else(|| CapsuleError::BadParams("Not enough shares for guardians".into()))?;
         let (eph_pk, share_nonce, share_ct) = {
             // HPKE-like
             let aad_share = blake3_label(b"guardian-share-aad", &aad);
@@ -468,34 +487,49 @@ pub fn export_capsule(inputs: ExportInputs) -> Result<Vec<u8>, CapsuleError> {
 
     let mut device_share = None;
     if inputs.policy.include_device {
-        let share = sh_iter.next().expect("enough shares");
+        let share = sh_iter.next()
+            .ok_or_else(|| CapsuleError::BadParams("Not enough shares for device".into()))?;
         let dk = inputs
             .device_key
-            .ok_or(CapsuleError::BadParams)?
-            .clone();
-        let device_key = XChaCha20Poly1305::new((&dk).into());
+            .ok_or_else(|| CapsuleError::BadParams("Device key required but not provided".into()))?;
+        let device_key = XChaCha20Poly1305::new(dk.into());
         let mut n = [0u8; 24];
         OsRng.fill_bytes(&mut n);
         let aad_dev = blake3_label(b"device-share-aad", &aad);
         let pt = bincode_serialize(&share)?;
         let ct = device_key
             .encrypt(&XNonce::from(n), chacha20poly1305::aead::Payload { msg: &pt, aad: &aad_dev })
-            .map_err(|_| CapsuleError::Decrypt)?;
+            .map_err(|_| CapsuleError::Encrypt)?;
         device_share = Some(DeviceWrappedShare { nonce: n, share_ct: ct });
     }
 
     let mut passphrase_share = None;
     if inputs.policy.include_passphrase {
-        let share = sh_iter.next().expect("enough shares");
-        let pass = inputs.passphrase.ok_or(CapsuleError::BadParams)?;
+        let share = sh_iter.next()
+            .ok_or_else(|| CapsuleError::BadParams("Not enough shares for passphrase".into()))?;
+        let pass = inputs.passphrase
+            .ok_or_else(|| CapsuleError::BadParams("Passphrase required but not provided".into()))?;
         let params = Argon2Params { m_cost_kib: 262144, t_cost: 3, p_cost: 1 }; // 256 MiB, 3 iters, p=1
-        let salt = SaltString::generate(&mut OsRng);
-        let salt_bytes = salt.as_str().as_bytes();
+        
+        // Generate raw salt bytes (not base64)
         let mut salt16 = [0u8; 16];
-        salt16[..16.min(salt_bytes.len())].copy_from_slice(&salt_bytes[..16.min(salt_bytes.len())]);
-        let argon2 = Argon2::new_with_secret(b"capsule-passphrase", argon2::Algorithm::Argon2id, argon2::Version::V0x13, argon2::Params::new(params.m_cost_kib, params.t_cost, params.p_cost, None).unwrap()).unwrap();
+        OsRng.fill_bytes(&mut salt16);
+        
+        // Derive Argon2 secret from wallet seed
+        let argon2_secret = derive_argon2_secret(inputs.seed)?;
+        let argon_params = argon2::Params::new(params.m_cost_kib, params.t_cost, params.p_cost, None)
+            .map_err(|e| CapsuleError::BadParams(format!("Invalid Argon2 params: {}", e)))?;
+        let argon2 = Argon2::new_with_secret(
+            &argon2_secret, 
+            argon2::Algorithm::Argon2id, 
+            argon2::Version::V0x13, 
+            argon_params
+        ).map_err(|e| CapsuleError::BadParams(format!("Argon2 init failed: {}", e)))?;
+        
         let mut key = [0u8; 32];
-        argon2.hash_password_into(pass.as_bytes(), &salt16, &mut key).unwrap();
+        argon2.hash_password_into(pass.as_bytes(), &salt16, &mut key)
+            .map_err(|e| CapsuleError::KeyDerivation(format!("Argon2 hash failed: {}", e)))?;
+        
         let aead_pp = XChaCha20Poly1305::new((&key).into());
         let mut n = [0u8; 24];
         OsRng.fill_bytes(&mut n);
@@ -503,7 +537,7 @@ pub fn export_capsule(inputs: ExportInputs) -> Result<Vec<u8>, CapsuleError> {
         let pt = bincode_serialize(&share)?;
         let ct = aead_pp
             .encrypt(&XNonce::from(n), chacha20poly1305::aead::Payload { msg: &pt, aad: &aad_pp })
-            .map_err(|_| CapsuleError::Decrypt)?;
+            .map_err(|_| CapsuleError::Encrypt)?;
         passphrase_share = Some(PassphraseWrappedShare { salt: salt16, params, nonce: n, share_ct: ct });
     }
 
@@ -511,8 +545,8 @@ pub fn export_capsule(inputs: ExportInputs) -> Result<Vec<u8>, CapsuleError> {
 
     // Compute authentication tag over all capsule components
     let mut auth_hasher = Blake3::new();
-    auth_hasher.update(&serde_cbor::to_vec(&header_preview).unwrap());
-    auth_hasher.update(&serde_cbor::to_vec(&wrapped).unwrap());
+    auth_hasher.update(&serde_cbor::to_vec(&header_preview).map_err(|e| CapsuleError::Ser(e.to_string()))?);
+    auth_hasher.update(&serde_cbor::to_vec(&wrapped).map_err(|e| CapsuleError::Ser(e.to_string()))?);
     auth_hasher.update(&ciphertext);
     let auth = *auth_hasher.finalize().as_bytes();
 
@@ -529,6 +563,7 @@ pub struct RecoveryInputs<'a> {
     pub guardian_keys: HashMap<String, [u8; 32]>, // label -> X25519 secret
     pub passphrase: Option<&'a str>,
     pub device_key: Option<&'a [u8; 32]>,
+    pub seed: &'a [u8; 32], // Required for Argon2 secret derivation
 }
 
 pub fn recover_capsule(inputs: RecoveryInputs) -> Result<SnapshotState, CapsuleError> {
@@ -539,12 +574,13 @@ pub fn recover_capsule(inputs: RecoveryInputs) -> Result<SnapshotState, CapsuleE
         return Err(CapsuleError::UnsupportedVersion(cap.header.version));
     }
 
-    // Verify auth
+    // Verify auth with constant-time comparison
     let mut auth_hasher = Blake3::new();
-    auth_hasher.update(&serde_cbor::to_vec(&cap.header).unwrap());
-    auth_hasher.update(&serde_cbor::to_vec(&cap.wrapped).unwrap());
+    auth_hasher.update(&serde_cbor::to_vec(&cap.header).map_err(|e| CapsuleError::Ser(e.to_string()))?);
+    auth_hasher.update(&serde_cbor::to_vec(&cap.wrapped).map_err(|e| CapsuleError::Ser(e.to_string()))?);
     auth_hasher.update(&cap.ciphertext);
-    if *auth_hasher.finalize().as_bytes() != cap.auth {
+    let computed_auth = auth_hasher.finalize();
+    if !bool::from(computed_auth.as_bytes().ct_eq(&cap.auth)) {
         return Err(CapsuleError::InvalidCapsule);
     }
 
@@ -555,7 +591,7 @@ pub fn recover_capsule(inputs: RecoveryInputs) -> Result<SnapshotState, CapsuleE
     for gct in &cap.wrapped.guardian_shares {
         if let Some(sk_bytes) = inputs.guardian_keys.get(&gct.label) {
             let sk = X25519Secret::from(*sk_bytes);
-            let aad_share = blake3_label(b"guardian-share-aad", &serde_cbor::to_vec(&cap.header).unwrap());
+            let aad_share = blake3_label(b"guardian-share-aad", &serde_cbor::to_vec(&cap.header).map_err(|e| CapsuleError::Ser(e.to_string()))?);
             let pt = hpke_like_decrypt(&sk, &gct.eph_pubkey, &gct.nonce, &aad_share, &gct.share_ct)?;
             let share: ShamirShare = bincode_deserialize(&pt)?;
             shares.push(share);
@@ -565,7 +601,7 @@ pub fn recover_capsule(inputs: RecoveryInputs) -> Result<SnapshotState, CapsuleE
     // Device share
     if let (true, Some(dev), Some(ds)) = (cap.header.policy.include_device, inputs.device_key, &cap.wrapped.device_share) {
         let aead = XChaCha20Poly1305::new(dev.into());
-        let aad_dev = blake3_label(b"device-share-aad", &serde_cbor::to_vec(&cap.header).unwrap());
+        let aad_dev = blake3_label(b"device-share-aad", &serde_cbor::to_vec(&cap.header).map_err(|e| CapsuleError::Ser(e.to_string()))?);
         let pt = aead
             .decrypt(&XNonce::from(ds.nonce), chacha20poly1305::aead::Payload { msg: &ds.share_ct, aad: &aad_dev })
             .map_err(|_| CapsuleError::Decrypt)?;
@@ -574,12 +610,23 @@ pub fn recover_capsule(inputs: RecoveryInputs) -> Result<SnapshotState, CapsuleE
 
     // Passphrase share
     if let (true, Some(pp), Some(ps)) = (cap.header.policy.include_passphrase, inputs.passphrase, &cap.wrapped.passphrase_share) {
-        let params = argon2::Params::new(ps.params.m_cost_kib, ps.params.t_cost, ps.params.p_cost, None).unwrap();
-        let argon2 = Argon2::new_with_secret(b"capsule-passphrase", argon2::Algorithm::Argon2id, argon2::Version::V0x13, params).unwrap();
+        // Derive Argon2 secret from wallet seed
+        let argon2_secret = derive_argon2_secret(inputs.seed)?;
+        let params = argon2::Params::new(ps.params.m_cost_kib, ps.params.t_cost, ps.params.p_cost, None)
+            .map_err(|e| CapsuleError::BadParams(format!("Invalid Argon2 params: {}", e)))?;
+        let argon2 = Argon2::new_with_secret(
+            &argon2_secret, 
+            argon2::Algorithm::Argon2id, 
+            argon2::Version::V0x13, 
+            params
+        ).map_err(|e| CapsuleError::BadParams(format!("Argon2 init failed: {}", e)))?;
+        
         let mut key = [0u8; 32];
-        argon2.hash_password_into(pp.as_bytes(), &ps.salt, &mut key).unwrap();
+        argon2.hash_password_into(pp.as_bytes(), &ps.salt, &mut key)
+            .map_err(|e| CapsuleError::KeyDerivation(format!("Argon2 hash failed: {}", e)))?;
+        
         let aead = XChaCha20Poly1305::new((&key).into());
-        let aad_pp = blake3_label(b"passphrase-share-aad", &serde_cbor::to_vec(&cap.header).unwrap());
+        let aad_pp = blake3_label(b"passphrase-share-aad", &serde_cbor::to_vec(&cap.header).map_err(|e| CapsuleError::Ser(e.to_string()))?);
         let pt = aead
             .decrypt(&XNonce::from(ps.nonce), chacha20poly1305::aead::Payload { msg: &ps.share_ct, aad: &aad_pp })
             .map_err(|_| CapsuleError::Decrypt)?;
@@ -599,8 +646,9 @@ pub fn recover_capsule(inputs: RecoveryInputs) -> Result<SnapshotState, CapsuleE
     let pt = aead_state
         .decrypt(&XNonce::from(cap.header.nonce), chacha20poly1305::aead::Payload { msg: &cap.ciphertext, aad: &aad })
         .map_err(|_| CapsuleError::Decrypt)?;
-    // Confirm commitment
-    if blake3_hash(&pt) != cap.header.state_root {
+    // Confirm commitment with constant-time comparison
+    let computed_state_root = blake3_hash(&pt);
+    if !bool::from(computed_state_root.ct_eq(&cap.header.state_root)) {
         return Err(CapsuleError::InvalidCapsule);
     }
     let state: SnapshotState = serde_cbor::from_slice(&pt).map_err(|e| CapsuleError::Ser(e.to_string()))?;
@@ -699,6 +747,7 @@ mod tests {
             guardian_keys: keys,
             passphrase: None,
             device_key: None,
+            seed: &seed,
         }).unwrap();
 
         assert_eq!(rec.anchor, [7u8; 32]);
@@ -739,6 +788,7 @@ mod tests {
             guardian_keys: keys.clone(),
             passphrase: None,
             device_key: Some(&device_key),
+            seed: &seed,
         }).unwrap();
         assert_eq!(rec1.anchor, [7u8; 32]);
 
@@ -748,6 +798,7 @@ mod tests {
             guardian_keys: HashMap::new(),
             passphrase: Some(passphrase),
             device_key: Some(&device_key),
+            seed: &seed,
         }).unwrap();
         assert_eq!(rec2.anchor, [7u8; 32]);
     }

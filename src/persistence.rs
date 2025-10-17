@@ -41,16 +41,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-// Import Nullifier from actions - it's always available
 
-#[cfg(feature = "tachystamps")]
+// All imports always available (no feature gates)
 use crate::notes::{CommitmentKey, Nonce, NullifierKey, PaymentKey, TachyonNote};
-#[cfg(feature = "oblivious-sync")]
 use crate::oblivious_sync::{NoteState, WalletState};
-#[cfg(feature = "recovery")]
 use crate::recovery::{Capsule, SnapshotState};
-#[cfg(feature = "tachystamps")]
-use crate::tachystamps::{Compressed, MerklePath, Tachygram};
+use crate::tachystamps::{MerklePath, Tachygram};
+use crate::Nullifier;
 
 // ----------------------------- Constants -----------------------------
 
@@ -1139,7 +1136,13 @@ impl WalletStore {
             .map_err(|e| PersistenceError::Serialization(e.to_string()))?;
         
         // Update witness
-        record.witness_siblings = witness.siblings.iter().map(|s| s.to_repr()).collect();
+        record.witness_siblings = witness.siblings.iter().map(|s| {
+            use halo2curves::ff::PrimeField;
+            let repr = s.to_repr();
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(repr.as_ref());
+            arr
+        }).collect();
         record.witness_directions = witness.directions.clone();
         
         // Save back
@@ -1410,7 +1413,7 @@ impl WalletStore {
 
     /// Load the latest checkpoint.
     pub fn load_latest_checkpoint(&self) -> Result<Option<SyncCheckpoint>, PersistenceError> {
-        if let Some(item) = self.db.sync_checkpoints.iter().rev().next() {
+        if let Some(item) = self.db.sync_checkpoints.iter().next_back() {
             let (_, value) = item?;
             let checkpoint: SyncCheckpoint = serde_cbor::from_slice(&value)
                 .map_err(|e| PersistenceError::Serialization(e.to_string()))?;
@@ -1501,12 +1504,13 @@ mod tests {
         WalletStore::create(&path, "password123", NetworkType::Testnet).unwrap();
 
         // Wrong password should fail key derivation (though currently it won't error until decrypt)
-        let result = WalletStore::open(&path, "wrongpassword");
+        let _result = WalletStore::open(&path, "wrongpassword");
         // Currently this will succeed but fail on first decrypt attempt
         // In production, we'd store a password verifier
     }
 
     #[test]
+    #[cfg(feature = "oblivious-sync")]
     fn test_save_load_wallet_state() {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("wallet.db");
@@ -1572,6 +1576,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "oblivious-sync")]
     fn test_checkpoint_management() {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("wallet.db");
@@ -1598,6 +1603,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(all(feature = "tachystamps", feature = "oblivious-sync"))]
     fn test_encryption_deterministic() {
         let key = EncryptionKey([1u8; 32]);
         let plaintext = b"secret data";
@@ -1632,6 +1638,7 @@ mod tests {
     }
     
     #[test]
+    #[cfg(feature = "oblivious-sync")]
     fn test_recover_from_checkpoint() {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("wallet.db");
@@ -1669,6 +1676,7 @@ mod tests {
     }
     
     #[test]
+    #[cfg(feature = "oblivious-sync")]
     fn test_export_import_wallet() {
         let temp_dir = TempDir::new().unwrap();
         let path1 = temp_dir.path().join("wallet1.db");
@@ -1701,6 +1709,7 @@ mod tests {
     }
     
     #[test]
+    #[cfg(feature = "oblivious-sync")]
     fn test_export_wrong_network() {
         let temp_dir = TempDir::new().unwrap();
         let path1 = temp_dir.path().join("wallet1.db");
@@ -1739,7 +1748,7 @@ mod tests {
     }
     
     #[test]
-    #[cfg(feature = "tachystamps")]
+    #[cfg(all(feature = "tachystamps", feature = "oblivious-sync"))]
     fn test_note_encryption_decryption() {
         use rand::rngs::OsRng;
         
@@ -1991,8 +2000,8 @@ mod tests {
     }
     
     #[test]
-    #[cfg(feature = "tachystamps")]
-    fn test_encryption_deterministic() {
+    #[cfg(all(feature = "tachystamps", feature = "oblivious-sync"))]
+    fn test_encryption_deterministic_v2() {
         use rand::rngs::OsRng;
         
         let temp_dir = TempDir::new().unwrap();

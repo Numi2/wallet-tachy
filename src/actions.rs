@@ -138,7 +138,7 @@ impl Serialize for RedPallasSignature {
         S: serde::Serializer,
     {
         if serializer.is_human_readable() {
-            serializer.serialize_str(&hex::encode(&self.0))
+            serializer.serialize_str(&hex::encode(self.0))
         } else {
             serializer.serialize_bytes(&self.0)
         }
@@ -621,6 +621,7 @@ fn verify_redpallas_signature(
 mod tests {
     use super::*;
     use rand::rngs::OsRng;
+    use reddsa::SigningKey;
     
     #[test]
     fn test_nullifier_constant_time_eq() {

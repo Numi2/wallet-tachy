@@ -33,33 +33,29 @@ pub mod key_randomization;
 pub mod note_encryption;
 pub mod batch_verify;
 
-// Tachystamps and note structures (require Nova)
-#[cfg(feature = "tachystamps")]
+// Poseidon chip for Halo2
+pub mod poseidon_chip;
+
+// Tachystamps with Halo2 (always enabled)
 pub mod tachystamps;
 
-#[cfg(feature = "tachystamps")]
-pub mod proof_aggregation;
+// Proof aggregation (needs rewrite for current nova-snark version)
+// pub mod proof_aggregation;
 
-#[cfg(feature = "tachystamps")]
+// Core tachystamp modules (always enabled)
 pub mod incremental_merkle;
-
-#[cfg(feature = "tachystamps")]
 pub mod notes;
-
-#[cfg(feature = "tachystamps")]
 pub mod spend;
 
-#[cfg(feature = "oblivious-sync")]
+// Oblivious synchronization (always enabled)
 pub mod oblivious_sync;
-
-#[cfg(feature = "oblivious-sync")]
 pub mod blockchain_provider;
 
-#[cfg(feature = "recovery")]
+/// Recovery mechanisms for wallet state including threshold guardians
 pub mod recovery;
 
-#[cfg(feature = "oob")]
-pub mod oob;
+// Out-of-band payments (needs full orchard integration - temporarily disabled)
+// pub mod oob;
 
 // Persistence layer
 pub mod persistence;
@@ -69,7 +65,7 @@ pub mod status_db;
 /// ZIP-321 Payment Request URI encoding and decoding
 pub mod zip321;
 
-#[cfg(feature = "zip324-full")]
+/// ZIP-324 Ephemeral payment capabilities
 pub mod zip324;
 
 // Re-export commonly used types
@@ -120,7 +116,7 @@ pub use batch_verify::{
     batch_verify_signatures,
 };
 
-#[cfg(feature = "tachystamps")]
+// Tachystamps (always enabled)
 pub use tachystamps::{
     Tachygram,
     TachyStepCircuit,
@@ -129,25 +125,7 @@ pub use tachystamps::{
     AnchorRange,
 };
 
-#[cfg(feature = "tachystamps")]
-pub use proof_aggregation::{
-    AggregateProof,
-    ProofBatch,
-    TransactionMetadata,
-    ContextPolicy,
-    ProofVerifier,
-    NoopVerifier,
-    CryptographicVerifier,
-    AggregationError,
-    aggregate_proofs,
-    aggregate_proofs_with_verifier,
-    aggregate_proofs_with_verifier_and_policy,
-    verify_aggregate,
-    verify_aggregate_full,
-    get_tx_authorized_pairs,
-};
-
-#[cfg(feature = "tachystamps")]
+// Notes (always enabled)
 pub use notes::{
     TachyonNote,
     PaymentKey,
@@ -160,7 +138,7 @@ pub use notes::{
     derive_note_secrets,
 };
 
-#[cfg(feature = "tachystamps")]
+// Spend (always enabled)
 pub use spend::{
     SpendContext,
     OutputContext,
@@ -170,7 +148,7 @@ pub use spend::{
     create_deshielding_tx,
 };
 
-#[cfg(feature = "oblivious-sync")]
+// Oblivious sync (always enabled)
 pub use oblivious_sync::{
     WalletState,
     NoteState,
@@ -180,7 +158,7 @@ pub use oblivious_sync::{
     BlockchainProvider,
 };
 
-#[cfg(feature = "oblivious-sync")]
+// Blockchain provider (always enabled)
 pub use blockchain_provider::{
     RpcBlockchainProvider,
     CachedBlockchainProvider,

@@ -195,29 +195,38 @@ impl Default for SyncServiceConfig {
 
 // ----------------------------- Errors -----------------------------
 
+/// Errors that can occur during oblivious synchronization
 #[derive(Error, Debug)]
 pub enum SyncError {
+    /// The block range is invalid
     #[error("block range invalid: from {0} to {1}")]
     InvalidBlockRange(u64, u64),
     
+    /// Too many blocks requested in a single sync
     #[error("too many blocks requested: {0} > {1}")]
     TooManyBlocks(u64, u64),
     
+    /// Too many nullifiers in the sync request
     #[error("too many nullifiers: {0} > {1}")]
     TooManyNullifiers(usize, usize),
     
+    /// Proof verification failed
     #[error("proof verification failed")]
     ProofVerificationFailed,
     
+    /// State commitment doesn't match
     #[error("state commitment mismatch")]
     StateCommitmentMismatch,
     
+    /// Blockchain data is unavailable for the requested block
     #[error("blockchain data unavailable for block {0}")]
     BlockchainDataUnavailable(u64),
     
+    /// Error from tachystamps module
     #[error("tachystamps error: {0}")]
     Tachystamps(#[from] TachyError),
     
+    /// Serialization error
     #[error("serialization error: {0}")]
     Serialization(String),
 }
@@ -378,7 +387,7 @@ impl WalletState {
         
         // Verify the compressed proof
         let valid = Prover::verify(pcd_proof, &z0)
-            .map_err(|e| SyncError::ProofVerificationFailed)?;
+            .map_err(|_e| SyncError::ProofVerificationFailed)?;
         
         if !valid {
             return Err(SyncError::ProofVerificationFailed);
@@ -406,7 +415,6 @@ pub struct ObliviousSyncService<B: BlockchainProvider> {
     config: SyncServiceConfig,
     prover: Option<Prover>, // Cached prover setup
     /// Incremental Merkle tree for efficient updates
-    #[cfg(feature = "tachystamps")]
     merkle_tree: Option<crate::incremental_merkle::IncrementalMerkleTree>,
 }
 
@@ -417,13 +425,11 @@ impl<B: BlockchainProvider> ObliviousSyncService<B> {
             blockchain,
             config,
             prover: None,
-            #[cfg(feature = "tachystamps")]
             merkle_tree: None,
         }
     }
     
     /// Initialize the incremental Merkle tree
-    #[cfg(feature = "tachystamps")]
     pub fn init_merkle_tree(&mut self) {
         self.merkle_tree = Some(crate::incremental_merkle::IncrementalMerkleTree::new(
             self.config.tree_height
@@ -538,41 +544,27 @@ impl<B: BlockchainProvider> ObliviousSyncService<B> {
             self.prover = Some(Prover::setup(&params)?);
         }
         
-        let prover = self.prover.as_mut().unwrap();
-        
         // Use incremental Merkle tree for efficient updates
-        #[cfg(feature = "tachystamps")]
+        // Initialize tree if needed
+        if self.merkle_tree.is_none() {
+            self.init_merkle_tree();
+        }
+        
         {
-            // Initialize tree if needed
-            if self.merkle_tree.is_none() {
-                self.init_merkle_tree();
-            }
-            
             let tree = self.merkle_tree.as_mut().unwrap();
             
             // Incrementally insert new tachygrams (O(log n) each)
             for (_, tachygram) in new_tachygrams {
-                tree.insert(tachygram)?;
+                tree.insert(tachygram)
+                    .map_err(|e| SyncError::Tachystamps(TachyError::Halo2(format!("{:?}", e))))?;
             }
         }
         
         // Get tree reference for witness generation
-        #[cfg(feature = "tachystamps")]
         let tree_ref = self.merkle_tree.as_ref().unwrap();
-        
-        #[cfg(not(feature = "tachystamps"))]
-        {
-            // Fallback: build from scratch (only when tachystamps feature disabled)
-            let all_tachygrams: Vec<Tachygram> = new_tachygrams
-                .iter()
-                .map(|(_, tg)| *tg)
-                .collect();
-            let tree = MerkleTree::new(&all_tachygrams, self.config.tree_height);
-            let root_fp = tree.root();
-        }
-        
-        #[cfg(feature = "tachystamps")]
         let root_fp = tree_ref.root();
+        
+        let prover = self.prover.as_mut().unwrap();
         
         // Convert anchor to field element
         let mut anchor_bytes = [0u8; 32];
@@ -589,11 +581,7 @@ impl<B: BlockchainProvider> ObliviousSyncService<B> {
         // Each step proves a batch of tachygram membership/non-membership
         let batch_size = self.config.proof_batch_size;
         
-        #[cfg(feature = "tachystamps")]
         let num_leaves = tree_ref.num_leaves;
-        
-        #[cfg(not(feature = "tachystamps"))]
-        let num_leaves = all_tachygrams.len();
         
         for chunk_start in (0..num_leaves).step_by(batch_size) {
             let chunk_end = (chunk_start + batch_size).min(num_leaves);
@@ -603,38 +591,24 @@ impl<B: BlockchainProvider> ObliviousSyncService<B> {
             let mut paths = Vec::with_capacity(batch_size);
             
             for i in chunk_start..chunk_end {
-                #[cfg(feature = "tachystamps")]
-                {
-                    // Use incremental tree for witness generation (efficient!)
-                    let witness = tree_ref.witness(i)
-                        .map_err(|e| SyncError::Tachystamps(
-                            TachyError::Nova(format!("witness error: {:?}", e))
-                        ))?;
-                    let tg = new_tachygrams.get(i - chunk_start)
-                        .map(|(_, tg)| tg.0)
-                        .unwrap_or([0u8; 32]);
-                    leaves[i - chunk_start] = tg;
-                    paths.push(witness);
-                }
-                
-                #[cfg(not(feature = "tachystamps"))]
-                {
-                    // Fallback to full tree
-                    leaves[i - chunk_start] = all_tachygrams[i].0;
-                    paths.push(tree.open(i));
-                }
+                // Use incremental tree for witness generation (efficient!)
+                let witness = tree_ref.witness(i)
+                    .map_err(|e| SyncError::Tachystamps(
+                        TachyError::Halo2(format!("witness error: {:?}", e))
+                    ))?;
+                let tg = new_tachygrams.get(i - chunk_start)
+                    .map(|(_, tg)| tg.0)
+                    .unwrap_or([0u8; 32]);
+                leaves[i - chunk_start] = tg;
+                paths.push(witness);
             }
             
             // Pad remaining with dummy proofs
-            for i in (chunk_end - chunk_start)..batch_size {
-                #[cfg(feature = "tachystamps")]
+            for _i in (chunk_end - chunk_start)..batch_size {
                 paths.push(tree_ref.witness(0).unwrap_or_else(|_| MerklePath {
                     siblings: vec![PallasFp::from(0u64); self.config.tree_height],
                     directions: vec![false; self.config.tree_height],
                 }));
-                
-                #[cfg(not(feature = "tachystamps"))]
-                paths.push(tree.open(0));
             }
             
             prover.prove_step(root_fp, anchor_range, leaves, paths)?;
@@ -651,10 +625,12 @@ impl<B: BlockchainProvider> ObliviousSyncService<B> {
 
 /// High-level wallet synchronization helper.
 pub struct WalletSynchronizer<B: BlockchainProvider> {
+    /// The oblivious sync service instance
     service: ObliviousSyncService<B>,
 }
 
 impl<B: BlockchainProvider> WalletSynchronizer<B> {
+    /// Create a new wallet synchronizer
     pub fn new(blockchain: B, config: SyncServiceConfig) -> Self {
         Self {
             service: ObliviousSyncService::new(blockchain, config),
@@ -701,12 +677,16 @@ impl<B: BlockchainProvider> WalletSynchronizer<B> {
 /// A simple in-memory blockchain for testing.
 #[derive(Clone, Debug)]
 pub struct MockBlockchain {
+    /// Blocks mapped by height
     blocks: BTreeMap<u64, Vec<Tachygram>>,
+    /// Spent nullifiers mapped to the block they were spent in
     spent_nullifiers: BTreeMap<Nullifier, u64>, // nullifier -> block spent
+    /// Anchors (state roots) for each block
     anchors: BTreeMap<u64, [u8; 32]>,
 }
 
 impl MockBlockchain {
+    /// Create a new empty mock blockchain
     pub fn new() -> Self {
         Self {
             blocks: BTreeMap::new(),
@@ -715,11 +695,13 @@ impl MockBlockchain {
         }
     }
     
+    /// Add a block to the mock blockchain
     pub fn add_block(&mut self, height: u64, tachygrams: Vec<Tachygram>, anchor: [u8; 32]) {
         self.blocks.insert(height, tachygrams);
         self.anchors.insert(height, anchor);
     }
     
+    /// Mark a nullifier as spent at a specific block
     pub fn mark_nullifier_spent(&mut self, nullifier: Nullifier, at_block: u64) {
         self.spent_nullifiers.insert(nullifier, at_block);
     }

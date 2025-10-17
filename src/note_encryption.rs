@@ -98,20 +98,20 @@ impl EphemeralSecretKey {
     pub fn derive_public_key(&self) -> EphemeralPublicKey {
         let point = pallas::Point::generator() * self.0;
         let affine = pallas::Affine::from(point);
-        EphemeralPublicKey(affine.to_bytes().into())
+        EphemeralPublicKey(affine.to_bytes())
     }
     
     /// Compute shared secret with a public key (ECDH)
     ///
     /// Returns [esk]pk_d
     pub fn shared_secret(&self, pk_d: &[u8; 32]) -> Option<SharedSecret> {
-        let pk_point = pallas::Affine::from_bytes(&(*pk_d).into())
+        let pk_point = pallas::Affine::from_bytes(&(*pk_d))
             .map(pallas::Point::from)
             .into_option()?;
         
         let shared = pk_point * self.0;
         let affine = pallas::Affine::from(shared);
-        Some(SharedSecret(affine.to_bytes().into()))
+        Some(SharedSecret(affine.to_bytes()))
     }
 }
 
@@ -185,17 +185,17 @@ impl IncomingViewingKey {
     /// Returns [ivk]epk
     pub fn shared_secret(&self, epk: &EphemeralPublicKey) -> Option<SharedSecret> {
         // Parse ivk as scalar
-        let ivk_scalar = PallasScalar::from_repr(self.0.into()).into_option()?;
+        let ivk_scalar = PallasScalar::from_repr(self.0).into_option()?;
         
         // Parse epk as point
-        let epk_point = pallas::Affine::from_bytes(&epk.0.into())
+        let epk_point = pallas::Affine::from_bytes(&epk.0)
             .map(pallas::Point::from)
             .into_option()?;
         
         // Compute [ivk]epk
         let shared = epk_point * ivk_scalar;
         let affine = pallas::Affine::from(shared);
-        Some(SharedSecret(affine.to_bytes().into()))
+        Some(SharedSecret(affine.to_bytes()))
     }
     
     /// Generate random IVK (for testing)

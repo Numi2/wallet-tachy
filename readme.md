@@ -4,16 +4,18 @@ not finished experiments inspired by Sean Bowe blogposts credit to Sean Bowe and
 todos:
 
 Architecture & Crypto
+
 Migrate to Halo2 with custom Poseidon gates and lookup tables - would reduce circuit size by ~10x and prover time by ~5x compared to Nova's generic R1CS.
+
 Use poseidon-paramgen for domain-specific parameters - currently relying on Nova's built-in constants which aren't optimized for Tachyon's specific security level.
 Implement proper SnarkPack-style proof aggregation - current aggregation works but doesn't achieve logarithmic verifier cost for block-level batching.
 Add formal nullifier flavor cryptanalysis - the oblivious sync privacy claim needs rigorous proof that flavor mechanism prevents position leakage.
 Implement full Merkle non-membership proofs for spent nullifier set - currently simplified to just accumulator updates.
 Performance & Optimization
 Replace Sled with async-compatible storage - use redb or surrealdb to avoid blocking I/O in wallet sync operations.
-Add incremental Merkle tree caching with frontier optimization - currently rebuilding witnesses from scratch, should use sparse Merkle tree with cached frontiers.
+Add incremental Merkle tree caching with frontier optimization - currently rebuilding witnesses from scratch
 Batch RedPallas signature verification - implement reddsa's batch API to verify 100+ signatures in ~2x time of single verification.
-SIMD-optimize Poseidon native hash - current implementation doesn't use vector instructions, leaving 4-8x performance on table.
+SIMD-optimize Poseidon native hash - current implementation doesn't use vector instructions, leaving x performance on table.
 Implement proof compression with recursive SNARKs - compress tachystamps from ~20KB to ~2KB using final Halo2 wrapping layer.
 Security & Testing
 Add property-based testing with proptest - critical for circuit satisfiability, nullifier uniqueness, and balance integrity properties.

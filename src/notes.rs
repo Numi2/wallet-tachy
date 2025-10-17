@@ -53,10 +53,7 @@
 use blake2b_simd::Params as Blake2bParams;
 use halo2curves::ff::PrimeField;
 use halo2curves::pasta::Fp as PallasFp;
-use nova_snark::provider::poseidon::{
-    PoseidonConstantsCircuit as PoseidonConsts, PoseidonRO as PoseidonRONative,
-};
-use nova_snark::traits::ROTrait;
+// Nova imports removed - using Halo2 Poseidon instead
 use serde::{Deserialize, Serialize};
 use subtle::{Choice, ConstantTimeEq};
 use thiserror::Error;
@@ -86,7 +83,7 @@ fn bytes_to_fp_le(bytes: &[u8]) -> PallasFp {
     let mut b = [0u8; 32];
     let len = core::cmp::min(32, bytes.len());
     b[..len].copy_from_slice(&bytes[..len]);
-    PallasFp::from_le_bytes_mod_order(&b)
+    PallasFp::from_repr(b).unwrap_or(PallasFp::zero())
 }
 
 fn fp_to_bytes_le(fp: PallasFp) -> [u8; 32] {
@@ -94,11 +91,9 @@ fn fp_to_bytes_le(fp: PallasFp) -> [u8; 32] {
 }
 
 fn poseidon_hash_many(inputs: &[PallasFp]) -> PallasFp {
-    let mut ro = PoseidonRONative::<PallasFp>::new(PoseidonConsts::<PallasFp>::default());
-    for x in inputs {
-        ro.absorb(*x);
-    }
-    ro.squeeze(PallasFp::NUM_BITS as usize)
+    // Use native Poseidon from tachystamps instead of Nova's Poseidon
+    use crate::tachystamps::native::poseidon_hash;
+    poseidon_hash(inputs)
 }
 
 // ----------------------------- Key Types -----------------------------
@@ -457,17 +452,22 @@ pub fn derive_note_secrets(shared_secret: &[u8]) -> (Nonce, CommitmentKey, Nulli
 
 // ----------------------------- Errors -----------------------------
 
+/// Errors that can occur during note operations
 #[derive(Error, Debug)]
 pub enum NoteError {
+    /// The note value is invalid
     #[error("invalid note value")]
     InvalidValue,
 
+    /// The payment key is invalid
     #[error("invalid payment key")]
     InvalidPaymentKey,
 
+    /// The note commitment is invalid
     #[error("invalid commitment")]
     InvalidCommitment,
 
+    /// Secret derivation failed
     #[error("derivation failed")]
     DerivationFailed,
 }

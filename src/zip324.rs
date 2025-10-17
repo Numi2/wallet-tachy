@@ -6,19 +6,27 @@ use url::Url;
 // TODO: Restore status_db integration once database module is implemented
 // use crate::status_db::{StatusDb, PaymentStatus, OutboundPayment};
 
+/// Errors that can occur when working with ZIP-324 payment capabilities
 #[derive(Debug, Error)]
 pub enum Zip324Error {
+    /// The payment capability URI is invalid
     #[error("invalid uri")] InvalidUri,
+    /// A required field is missing from the URI
     #[error("missing field")] MissingField,
 }
 
+/// Represents a parsed payment capability URI
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PaymentCapabilityUri {
+    /// The amount in ZEC (as a string)
     pub amount_zec: String,
+    /// Optional description of the payment
     pub desc: Option<String>,
+    /// The ephemeral payment key encoded in bech32
     pub key_bech32: String,
 }
 
+/// Derive an ephemeral payment key from a child extended key
 pub fn derive_payment_key(esk_child: &[u8]) -> [u8; 32] {
     // BLAKE2b-256 with personalization "Zcash_PaymentURI"
     let mut state = Blake2bParams::new()
@@ -32,10 +40,12 @@ pub fn derive_payment_key(esk_child: &[u8]) -> [u8; 32] {
     out
 }
 
+/// Encode a key in bech32 format with the given human-readable part
 pub fn bech32_encode_key(hrp: &str, key: &[u8]) -> String {
     bech32::encode(hrp, key.to_base32(), Variant::Bech32).expect("bech32 encode")
 }
 
+/// Build a payment capability URI from the given components
 pub fn build_capability_uri(amount_zec: &str, desc: Option<&str>, key_bech32: &str) -> String {
     let mut fragment_parts: Vec<String> = vec![format!("amount={}", amount_zec)];
     if let Some(d) = desc { fragment_parts.push(format!("desc={}", urlencoding::encode(d))); }
@@ -44,6 +54,7 @@ pub fn build_capability_uri(amount_zec: &str, desc: Option<&str>, key_bech32: &s
     format!("https://pay.withzcash.com/payment/v1#{}", fragment_parts.join("&"))
 }
 
+/// Parse a payment capability URI and extract its components
 pub fn parse_capability_uri(uri: &str) -> Result<PaymentCapabilityUri, Zip324Error> {
     let parsed = Url::parse(uri).map_err(|_| Zip324Error::InvalidUri)?;
     // Enforce centralized deployment constraints: https, host whitelisted, standard port
@@ -72,14 +83,22 @@ pub fn parse_capability_uri(uri: &str) -> Result<PaymentCapabilityUri, Zip324Err
     })
 }
 
+/// Default transaction fee in zatoshis (0.00001 ZEC)
 pub const DEFAULT_FEE_ZAT: u64 = 1000; // 0.00001 ZEC
 
+/// Trait for wallet engines that can finalize ephemeral payments
 pub trait FinalizeEngine {
-    fn coin_type(&self) -> u32; // SLIP-44 coin type for ZEC mainnet/testnet
+    /// Get the SLIP-44 coin type (ZEC mainnet/testnet)
+    fn coin_type(&self) -> u32;
+    /// Get the next unused payment index
     fn next_unused_payment_index(&self) -> Result<u32, String>;
+    /// Derive an ephemeral secret key child from coin type and index
     fn derive_esk_child(&self, coin_type: u32, idx: u32) -> Result<[u8; 32], String>;
-    fn build_tx_output_to_ephemeral(&self, key: &[u8; 32], amount_zat: u64) -> Result<[u8; 32], String>; // returns txid
+    /// Build a transaction output to an ephemeral key and return the txid
+    fn build_tx_output_to_ephemeral(&self, key: &[u8; 32], amount_zat: u64) -> Result<[u8; 32], String>;
+    /// Check if a note exists and is unspent for the given key
     fn note_exists_and_unspent(&self, key: &[u8; 32], expected_amount_zat: u64) -> Result<bool, String>;
+    /// Sweep funds from an ephemeral key to the wallet's address
     fn sweep_with_key_to_wallet_addr(&self, key: &[u8; 32], amount_zat: u64) -> Result<[u8; 32], String>;
 }
 
@@ -130,6 +149,7 @@ pub fn recipient_finalize_capability<E: FinalizeEngine>(
     Ok(txid)
 }
 
+/// Format an amount in zatoshis as a ZEC string with up to 8 decimal places
 pub fn format_zat(zat: u64) -> String {
     // 8 decimal places
     let whole = zat / 100_000_000;
@@ -137,6 +157,7 @@ pub fn format_zat(zat: u64) -> String {
     if frac == 0 { whole.to_string() } else { format!("{}.{}", whole, format!("{:08}", frac).trim_end_matches('0')) }
 }
 
+/// Parse a ZEC amount string and convert to zatoshis
 pub fn parse_zec_amount_to_zat(s: &str) -> Result<u64, &'static str> {
     if s.is_empty() { return Err("empty"); }
     let parts: Vec<&str> = s.split('.').collect();

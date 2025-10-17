@@ -26,7 +26,7 @@ use bellpepper::gadgets::{
 use bellpepper_core::{ConstraintSystem, SynthesisError};
 use halo2curves::ff::{Field, PrimeField};
 use halo2curves::pasta::Fp as PallasFp;
-use nova_snark::provider::pasta::{PallasEngine, VestaEngine};
+use nova_snark::provider::{PallasEngine, VestaEngine};
 use nova_snark::traits::circuit::StepCircuit;
 use nova_snark::traits::Group;
 use nova_snark::{CompressedSNARK, PublicParams, RecursiveSNARK};

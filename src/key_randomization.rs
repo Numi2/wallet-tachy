@@ -78,12 +78,12 @@ impl SpendAuthorizationKey {
     
     /// From bytes (for deterministic derivation)
     pub fn from_bytes(bytes: [u8; 32]) -> Option<Self> {
-        PallasScalar::from_repr(bytes.into()).into_option().map(Self)
+        PallasScalar::from_repr(bytes).into_option().map(Self)
     }
     
     /// To bytes
     pub fn to_bytes(&self) -> [u8; 32] {
-        self.0.to_repr().into()
+        self.0.to_repr()
     }
     
     /// Randomize this key with a randomizer α
@@ -124,7 +124,7 @@ impl SpendAuthorizationVerifyingKey {
         // ak = [ask]G
         let point = pallas::Point::generator() * ask.0;
         let affine = pallas::Affine::from(point);
-        Self(affine.to_bytes().into())
+        Self(affine.to_bytes())
     }
     
     /// Randomize this key with a randomizer α
@@ -132,7 +132,7 @@ impl SpendAuthorizationVerifyingKey {
     /// Returns rk = ak + [α]G
     pub fn randomize(&self, alpha: &Randomizer) -> RandomizedVerifyingKey {
         // Parse ak as a point
-        let ak_point = pallas::Affine::from_bytes(&self.0.into())
+        let ak_point = pallas::Affine::from_bytes(&self.0)
             .map(pallas::Point::from)
             .expect("valid ak point");
         
@@ -143,12 +143,12 @@ impl SpendAuthorizationVerifyingKey {
         let rk_point = ak_point + alpha_point;
         let rk_affine = pallas::Affine::from(rk_point);
         
-        RandomizedVerifyingKey(rk_affine.to_bytes().into())
+        RandomizedVerifyingKey(rk_affine.to_bytes())
     }
     
     /// Convert to curve point
     pub fn to_point(&self) -> Option<pallas::Point> {
-        pallas::Affine::from_bytes(&self.0.into())
+        pallas::Affine::from_bytes(&self.0)
             .into_option()
             .map(pallas::Point::from)
     }
@@ -176,12 +176,12 @@ impl Randomizer {
     
     /// From bytes (for testing)
     pub fn from_bytes(bytes: [u8; 32]) -> Option<Self> {
-        PallasScalar::from_repr(bytes.into()).into_option().map(Self)
+        PallasScalar::from_repr(bytes).into_option().map(Self)
     }
     
     /// To bytes
     pub fn to_bytes(&self) -> [u8; 32] {
-        self.0.to_repr().into()
+        self.0.to_repr()
     }
 }
 

@@ -36,8 +36,6 @@
 use crate::actions::*;
 use crate::notes::*;
 use crate::tachystamps::*;
-use rand::RngCore;
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 // ----------------------------- Spend Context -----------------------------
@@ -303,10 +301,11 @@ pub fn create_deshielding_tx(
 // ----------------------------- Field Conversion (re-export from notes) -----------------------------
 
 fn bytes_to_fp_le(bytes: &[u8]) -> halo2curves::pasta::Fp {
+    use halo2curves::ff::PrimeField;
     let mut b = [0u8; 32];
     let len = core::cmp::min(32, bytes.len());
     b[..len].copy_from_slice(&bytes[..len]);
-    halo2curves::pasta::Fp::from_le_bytes_mod_order(&b)
+    halo2curves::pasta::Fp::from_repr(b).unwrap_or(halo2curves::pasta::Fp::zero())
 }
 
 // ----------------------------- Errors -----------------------------
@@ -338,6 +337,7 @@ pub enum TxBuilderError {
 mod tests {
     use super::*;
     use rand::rngs::OsRng;
+    use group::ff::Field;
 
     fn dummy_merkle_path(height: usize) -> MerklePath {
         use halo2curves::pasta::Fp as PallasFp;
@@ -354,6 +354,9 @@ mod tests {
         let (psi, rcm, flavor) = derive_note_secrets(b"shared-secret");
 
         let note = TachyonNote::new(pk, 1000, psi, rcm);
+        // Check nullifier derivation first (before moving nk)
+        let nf2 = note.nullifier(&nk, &flavor);
+        
         let spend = SpendContext {
             note: note.clone(),
             nk,
@@ -362,9 +365,7 @@ mod tests {
             note_index: 0,
         };
 
-        // Check nullifier derivation
         let nf1 = spend.nullifier();
-        let nf2 = note.nullifier(&nk, &flavor);
         assert_eq!(nf1, nf2);
 
         // Check tachygrams

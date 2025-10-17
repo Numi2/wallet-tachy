@@ -218,7 +218,7 @@ impl StatusDb {
         let value = serde_cbor::to_vec(payment)
             .map_err(|e| StatusDbError::Serialization(e.to_string()))?;
         
-        self.outbound.insert(&key, value)?;
+        self.outbound.insert(key, value)?;
         
         // Index URI -> index for quick lookups
         let uri_key = blake3::hash(payment.uri.as_bytes());
@@ -231,7 +231,7 @@ impl StatusDb {
     pub fn get_outbound(&self, index: u32) -> Result<Option<OutboundPayment>, StatusDbError> {
         let key = index.to_le_bytes();
         
-        if let Some(value) = self.outbound.get(&key)? {
+        if let Some(value) = self.outbound.get(key)? {
             let payment: OutboundPayment = serde_cbor::from_slice(&value)
                 .map_err(|e| StatusDbError::Serialization(e.to_string()))?;
             Ok(Some(payment))
@@ -310,7 +310,7 @@ impl StatusDb {
         }
         
         let key = index.to_le_bytes();
-        self.outbound.remove(&key)?;
+        self.outbound.remove(key)?;
         
         Ok(())
     }

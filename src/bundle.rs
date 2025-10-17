@@ -68,7 +68,7 @@ impl Serialize for BindingSignature {
         S: serde::Serializer,
     {
         if serializer.is_human_readable() {
-            serializer.serialize_str(&hex::encode(&self.0))
+            serializer.serialize_str(&hex::encode(self.0))
         } else {
             serializer.serialize_bytes(&self.0)
         }
@@ -459,7 +459,7 @@ fn verify_tachystamp_covers_actions(
             // All pairs matched - tachystamp covers these actions
             Ok(())
         }
-        TachystampReference::AggregateRef(aggregate_id, tx_index) => {
+        TachystampReference::AggregateRef(_aggregate_id, _tx_index) => {
             // In aggregate mode, the caller must have already verified the aggregate
             // and ensured this bundle's actions are covered.
             // We can't verify this without access to the aggregate itself.
@@ -582,12 +582,11 @@ fn compute_value_balance_plaintext(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::rngs::OsRng;
     
     fn dummy_traditional_action() -> TraditionalAction {
         TraditionalAction {
             nf: Nullifier([1u8; 32]),
-            cmX: NoteCommitment([2u8; 32]),
+            cm_x: NoteCommitment([2u8; 32]),
             cv_net: ValueCommitment([3u8; 32]),
             rk: RandomizedVerifyingKey([4u8; 32]),
             sig: RedPallasSignature([5u8; 64]),
@@ -707,7 +706,7 @@ mod tests {
         // Add two actions with the SAME nullifier
         let action1 = TraditionalAction {
             nf: Nullifier([42u8; 32]),  // Same nullifier
-            cmX: NoteCommitment([1u8; 32]),
+            cm_x: NoteCommitment([1u8; 32]),
             cv_net: ValueCommitment([3u8; 32]),
             rk: RandomizedVerifyingKey([4u8; 32]),
             sig: RedPallasSignature([5u8; 64]),
@@ -717,7 +716,7 @@ mod tests {
         
         let action2 = TraditionalAction {
             nf: Nullifier([42u8; 32]),  // DUPLICATE - should fail
-            cmX: NoteCommitment([2u8; 32]),
+            cm_x: NoteCommitment([2u8; 32]),
             cv_net: ValueCommitment([7u8; 32]),
             rk: RandomizedVerifyingKey([8u8; 32]),
             sig: RedPallasSignature([9u8; 64]),

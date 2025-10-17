@@ -30,8 +30,6 @@
 //! - For height 32: ~32 frontier nodes + cache
 
 use halo2curves::pasta::Fp as PallasFp;
-use halo2curves::ff::PrimeField;
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use thiserror::Error;
 
@@ -39,11 +37,13 @@ use crate::tachystamps::{Tachygram, MerklePath};
 
 // Import Poseidon hash from tachystamps
 use crate::tachystamps::{
-    DS_LEAF, DS_NODE,
-    poseidon_native_hash_many,
     fp_u64,
     bytes_to_fp_le,
 };
+use crate::tachystamps::native::poseidon_hash as poseidon_native_hash_many;
+
+pub const DS_LEAF: u64 = 0x6c656166; // "leaf"
+pub const DS_NODE: u64 = 0x6e6f6465; // "node"
 
 // Make these accessible
 fn poseidon_hash_leaf(leaf: &Tachygram) -> PallasFp {
@@ -89,7 +89,7 @@ impl IncrementalMerkleTree {
         let capacity = 1 << height;
         
         // Precompute empty node hashes
-        let mut empty_nodes = vec![PallasFp::ZERO; height + 1];
+        let mut empty_nodes = vec![PallasFp::zero(); height + 1];
         empty_nodes[0] = poseidon_hash_leaf(&Tachygram([0u8; 32])); // Empty leaf
         
         for level in 1..=height {
@@ -269,22 +269,30 @@ impl IncrementalMerkleTree {
 /// Cache statistics
 #[derive(Clone, Debug)]
 pub struct CacheStats {
+    /// Number of leaves in the tree
     pub num_leaves: usize,
+    /// Size of the cache in nodes
     pub cache_size: usize,
+    /// Height of the tree
     pub height: usize,
+    /// Ratio of filled leaves to capacity
     pub fill_ratio: f64,
 }
 
 // ----------------------------- Errors -----------------------------
 
+/// Errors that can occur during Merkle tree operations
 #[derive(Error, Debug)]
 pub enum MerkleError {
-    #[error("tree is full (capacity: {0})")]
+    /// The tree has reached its maximum capacity
+    #[error("tree is full")]
     TreeFull,
     
+    /// The provided leaf index is out of bounds
     #[error("invalid leaf index")]
     InvalidIndex,
     
+    /// The witness path is invalid
     #[error("invalid witness")]
     InvalidWitness,
 }
@@ -294,6 +302,7 @@ pub enum MerkleError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use group::ff::Field;
     
     #[test]
     fn test_empty_tree() {

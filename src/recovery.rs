@@ -19,8 +19,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519Secret};
 
-pub mod tachystamps;
-
 // ----------------------------- Errors -----------------------------
 
 #[derive(Debug, Error)]
@@ -99,33 +97,51 @@ pub struct RecoveryPolicy {
 
 // ----------------------------- Capsule Format -----------------------------
 
+/// Header for a recovery capsule
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CapsuleHeader {
+    /// Version of the capsule format
     pub version: u16,
+    /// Cryptographic ciphersuite used
     pub ciphersuite: Ciphersuite,
+    /// Recovery policy configuration
     pub policy: RecoveryPolicyPublic,
-    pub h_i: [u8; 32],          // ratchet hash for snapshot i
-    pub state_root: [u8; 32],   // commitment to state payload
-    pub created: u64,           // unix seconds
-    pub nonce: [u8; 24],        // AEA  
+    /// Ratchet hash for snapshot i
+    pub h_i: [u8; 32],
+    /// Commitment to state payload
+    pub state_root: [u8; 32],
+    /// Creation time in unix seconds
+    pub created: u64,
+    /// Nonce for AEAD encryption
+    pub nonce: [u8; 24],
 }
 
+/// Public recovery policy information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecoveryPolicyPublic {
+    /// Minimum number of shares needed for recovery
     pub threshold: u8,
+    /// List of guardians
     pub guardians: Vec<GuardianPublic>,
+    /// Whether device key is included
     pub include_device: bool,
+    /// Whether passphrase is included
     pub include_passphrase: bool,
 }
 
+/// Public guardian information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GuardianPublic {
+    /// Human-readable label for this guardian
     pub label: String,
+    /// Guardian's public key
     pub pubkey: [u8; 32],
 }
 
+/// Supported cryptographic cipher suites for recovery
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Ciphersuite {
+    /// X25519 key exchange with HKDF-SHA256 and XChaCha20-Poly1305 AEAD
     X25519_HKDF_SHA256_XCHACHA20POLY1305,
 }
 
@@ -326,7 +342,7 @@ fn hpke_like_encrypt(recipient_pub: &[u8; 32], aad: &[u8], pt: &[u8]) -> ( [u8;3
     let mut nonce_bytes = [0u8; 24];
     OsRng.fill_bytes(&mut nonce_bytes);
     let ct = aead
-        .encrypt(XNonce::from(nonce_bytes), chacha20poly1305::aead::Payload { msg: pt, aad })
+        .encrypt(&XNonce::from(nonce_bytes), chacha20poly1305::aead::Payload { msg: pt, aad })
         .expect("encrypt");
     ( *eph_pk.as_bytes(), nonce_bytes, ct )
 }
@@ -349,7 +365,7 @@ fn hpke_like_decrypt(recipient_sk: &X25519Secret, eph_pub: &[u8; 32], nonce: &[u
     // 3) Decrypt with XChaCha20-Poly1305
     let aead = XChaCha20Poly1305::new(AeadKey::from_slice(&key));
     let pt = aead
-        .decrypt(XNonce::from(*nonce), chacha20poly1305::aead::Payload { msg: ct, aad })
+        .decrypt(&XNonce::from(*nonce), chacha20poly1305::aead::Payload { msg: ct, aad })
         .map_err(|_| CapsuleError::Decrypt)?;
     
     Ok(pt)
@@ -409,7 +425,7 @@ pub fn export_capsule(inputs: ExportInputs) -> Result<Vec<u8>, CapsuleError> {
     let aad = serde_cbor::to_vec(&header_preview).map_err(|e| CapsuleError::Ser(e.to_string()))?;
     let ciphertext = aead
         .encrypt(
-            XNonce::from(nonce),
+            &XNonce::from(nonce),
             chacha20poly1305::aead::Payload { msg: &state_bytes, aad: &aad },
         )
         .map_err(|_| CapsuleError::Decrypt)?;
@@ -446,13 +462,13 @@ pub fn export_capsule(inputs: ExportInputs) -> Result<Vec<u8>, CapsuleError> {
             .device_key
             .ok_or(CapsuleError::BadParams)?
             .clone();
-        let device_key = XChaCha20Poly1305::new(AeadKey::from_slice(dk));
+        let device_key = XChaCha20Poly1305::new(AeadKey::from_slice(&dk));
         let mut n = [0u8; 24];
         OsRng.fill_bytes(&mut n);
         let aad_dev = blake3_label(b"device-share-aad", &aad);
         let pt = bincode_serialize(&share)?;
         let ct = device_key
-            .encrypt(XNonce::from(n), chacha20poly1305::aead::Payload { msg: &pt, aad: &aad_dev })
+            .encrypt(&XNonce::from(n), chacha20poly1305::aead::Payload { msg: &pt, aad: &aad_dev })
             .map_err(|_| CapsuleError::Decrypt)?;
         device_share = Some(DeviceWrappedShare { nonce: n, share_ct: ct });
     }
@@ -475,7 +491,7 @@ pub fn export_capsule(inputs: ExportInputs) -> Result<Vec<u8>, CapsuleError> {
         let aad_pp = blake3_label(b"passphrase-share-aad", &aad);
         let pt = bincode_serialize(&share)?;
         let ct = aead_pp
-            .encrypt(XNonce::from(n), chacha20poly1305::aead::Payload { msg: &pt, aad: &aad_pp })
+            .encrypt(&XNonce::from(n), chacha20poly1305::aead::Payload { msg: &pt, aad: &aad_pp })
             .map_err(|_| CapsuleError::Decrypt)?;
         passphrase_share = Some(PassphraseWrappedShare { salt: salt16, params, nonce: n, share_ct: ct });
     }
@@ -535,7 +551,7 @@ pub fn recover_capsule(inputs: RecoveryInputs) -> Result<SnapshotState, CapsuleE
         let aead = XChaCha20Poly1305::new(AeadKey::from_slice(dev));
         let aad_dev = blake3_label(b"device-share-aad", &serde_cbor::to_vec(&cap.header).unwrap());
         let pt = aead
-            .decrypt(XNonce::from(ds.nonce), chacha20poly1305::aead::Payload { msg: &ds.share_ct, aad: &aad_dev })
+            .decrypt(&XNonce::from(ds.nonce), chacha20poly1305::aead::Payload { msg: &ds.share_ct, aad: &aad_dev })
             .map_err(|_| CapsuleError::Decrypt)?;
         shares.push(bincode_deserialize(&pt)?);
     }
@@ -549,7 +565,7 @@ pub fn recover_capsule(inputs: RecoveryInputs) -> Result<SnapshotState, CapsuleE
         let aead = XChaCha20Poly1305::new(AeadKey::from_slice(&key));
         let aad_pp = blake3_label(b"passphrase-share-aad", &serde_cbor::to_vec(&cap.header).unwrap());
         let pt = aead
-            .decrypt(XNonce::from(ps.nonce), chacha20poly1305::aead::Payload { msg: &ps.share_ct, aad: &aad_pp })
+            .decrypt(&XNonce::from(ps.nonce), chacha20poly1305::aead::Payload { msg: &ps.share_ct, aad: &aad_pp })
             .map_err(|_| CapsuleError::Decrypt)?;
         shares.push(bincode_deserialize(&pt)?);
     }
@@ -565,7 +581,7 @@ pub fn recover_capsule(inputs: RecoveryInputs) -> Result<SnapshotState, CapsuleE
     let aead_state = XChaCha20Poly1305::new(AeadKey::from_slice(&k_snap));
     let aad = serde_cbor::to_vec(&cap.header).map_err(|e| CapsuleError::Ser(e.to_string()))?;
     let pt = aead_state
-        .decrypt(XNonce::from(cap.header.nonce), chacha20poly1305::aead::Payload { msg: &cap.ciphertext, aad: &aad })
+        .decrypt(&XNonce::from(cap.header.nonce), chacha20poly1305::aead::Payload { msg: &cap.ciphertext, aad: &aad })
         .map_err(|_| CapsuleError::Decrypt)?;
     // Confirm commitment
     if blake3_hash(&pt) != cap.header.state_root {
@@ -659,8 +675,8 @@ mod tests {
         }).unwrap();
 
         let mut keys = HashMap::new();
-        keys.insert("g1".into(), *g1_sk.to_bytes());
-        keys.insert("g2".into(), *g2_sk.to_bytes());
+        keys.insert("g1".into(), g1_sk.to_bytes());
+        keys.insert("g2".into(), g2_sk.to_bytes());
 
         let rec = recover_capsule(RecoveryInputs {
             capsule_bytes: &capsule,
@@ -701,7 +717,7 @@ mod tests {
 
         // Recover using guardian + device
         let mut keys = HashMap::new();
-        keys.insert("g1".into(), *g1_sk.to_bytes());
+        keys.insert("g1".into(), g1_sk.to_bytes());
         let rec1 = recover_capsule(RecoveryInputs {
             capsule_bytes: &capsule,
             guardian_keys: keys.clone(),

@@ -264,12 +264,13 @@ impl RpcBlockchainProvider {
         // For now, use the same parsing logic as Orchard
         
         // Parse tachyactions array
+        let empty_vec = vec![];
         let actions = bundle
             .get("tachyactions")
             .and_then(|v| v.as_array())
-            .unwrap_or(&vec![]); // Tachyon may not be deployed yet
+            .unwrap_or(&empty_vec); // Tachyon may not be deployed yet
         
-        for action in actions {
+        for _action in actions {
             // Tachyactions don't contain nullifiers/commitments directly
             // They reference tachygrams via a separate tachystamp
             // Skip for now (would need tachystamp parsing)
@@ -363,7 +364,7 @@ impl RpcBlockchainProvider {
 impl BlockchainProvider for RpcBlockchainProvider {
     fn get_tachygrams_in_block(&self, block_height: u64) -> Result<Vec<Tachygram>, SyncError> {
         let block = self.fetch_block(block_height)
-            .map_err(|e| SyncError::BlockchainDataUnavailable(block_height))?;
+            .map_err(|_e| SyncError::BlockchainDataUnavailable(block_height))?;
         
         Ok(block.tachygrams)
     }
@@ -583,23 +584,30 @@ impl BlockchainProvider for CachedBlockchainProvider {
 
 // ----------------------------- Errors -----------------------------
 
+/// Errors that can occur when interacting with the blockchain via RPC
 #[derive(Error, Debug)]
 pub enum RpcError {
+    /// The RPC endpoint is invalid
     #[error("invalid RPC endpoint")]
     InvalidEndpoint,
     
+    /// The RPC request failed
     #[error("RPC request failed: {0}")]
     RequestFailed(String),
     
+    /// Failed to parse the RPC response
     #[error("RPC response parse error: {0}")]
     ParseError(String),
     
+    /// Authentication with the RPC endpoint failed
     #[error("authentication failed")]
     AuthenticationFailed,
     
+    /// The requested feature is not implemented
     #[error("not implemented: {0}")]
     NotImplemented(String),
     
+    /// The request timed out
     #[error("timeout after {0} seconds")]
     Timeout(u64),
 }

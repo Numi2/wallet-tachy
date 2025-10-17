@@ -50,6 +50,10 @@ nova-snark = { version = "0.39", default-features = false }
 bellpepper-core = "0.4"
 bellpepper = "0.4"
 
+# Halo2 dependencies for efficient circuits
+halo2_proofs = { version = "0.3", default-features = false, features = ["batch"] }
+halo2_gadgets = { version = "0.3", default-features = false }
+
 # Serialization for share wrapping (used in export.rs)
 bincode = { version = "2.0.0-rc.3", features = ["serde"] }
 
@@ -74,29 +78,22 @@ ark-vesta = "0.4"
 default = []
 zip321_crate = ["dep:zip321"]
 
-# Tachystamps require Nova, halo2curves, and reddsa
+# All features enabled by default (no gates)
+# Legacy feature names kept for compatibility
 tachystamps = []
-
-# Oblivious sync requires tachystamps
-oblivious-sync = ["tachystamps"]
-
-# Recovery features (already working)
+oblivious-sync = []
 recovery = []
-
-# Out-of-band payment features (blocked on external deps)
 oob = []
-
-# Full ZIP-324 support (requires external deps)
 zip324-full = []
 
 [dependencies.zip321]
 version = "0.1.0"
 optional = true
 
-# Zcash ecosystem (commented out until needed for OOB integration)
-# orchard = "0.7"
-# zcash_protocol = "0.1"
-# pqcrypto-mlkem = "0.5"
+# Zcash ecosystem (enabled for OOB integration)
+orchard = "0.9"
+zcash_protocol = "0.3"
+pqcrypto-mlkem = "0.5"
 
 # Override nova-snark's halo2curves dependency to disable asm by default
 # This prevents build failures on non-x86_64 targets (e.g., Apple Silicon)

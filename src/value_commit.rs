@@ -108,12 +108,12 @@ impl ValueCommitRandomness {
     
     /// From bytes (for testing)
     pub fn from_bytes(bytes: [u8; 32]) -> Option<Self> {
-        PallasScalar::from_repr(bytes.into()).into_option().map(Self)
+        PallasScalar::from_repr(bytes).into_option().map(Self)
     }
     
     /// To bytes
     pub fn to_bytes(&self) -> [u8; 32] {
-        self.0.to_repr().into()
+        self.0.to_repr()
     }
 }
 
@@ -156,12 +156,12 @@ impl ValueCommit {
         
         // Serialize as compressed point (32 bytes)
         let affine = pallas::Affine::from(commitment);
-        Self(affine.to_bytes().into())
+        Self(affine.to_bytes())
     }
     
     /// Get the curve point representation
     pub fn to_point(&self) -> Option<pallas::Point> {
-        pallas::Affine::from_bytes(&self.0.into())
+        pallas::Affine::from_bytes(&self.0)
             .into_option()
             .map(pallas::Point::from)
     }
@@ -169,7 +169,7 @@ impl ValueCommit {
     /// From curve point
     pub fn from_point(point: &pallas::Point) -> Self {
         let affine = pallas::Affine::from(*point);
-        Self(affine.to_bytes().into())
+        Self(affine.to_bytes())
     }
 }
 
@@ -236,12 +236,12 @@ impl BindingVerifyingKey {
         // bvk = [bsk]R
         let point = *RANDOMNESS_GENERATOR * bsk.0;
         let affine = pallas::Affine::from(point);
-        Self(affine.to_bytes().into())
+        Self(affine.to_bytes())
     }
     
     /// Get the curve point representation
     pub fn to_point(&self) -> Option<pallas::Point> {
-        pallas::Affine::from_bytes(&self.0.into())
+        pallas::Affine::from_bytes(&self.0)
             .into_option()
             .map(pallas::Point::from)
     }
@@ -258,7 +258,7 @@ impl Serialize for BindingSig {
         S: serde::Serializer,
     {
         if serializer.is_human_readable() {
-            serializer.serialize_str(&hex::encode(&self.0))
+            serializer.serialize_str(&hex::encode(self.0))
         } else {
             serializer.serialize_bytes(&self.0)
         }
@@ -396,7 +396,7 @@ pub fn derive_binding_verifying_key_from_commitments(
     
     // This net should equal [bsk]R
     let affine = pallas::Affine::from(net);
-    Some(BindingVerifyingKey(affine.to_bytes().into()))
+    Some(BindingVerifyingKey(affine.to_bytes()))
 }
 
 // ----------------------------- Tests -----------------------------
@@ -442,8 +442,8 @@ mod tests {
         let rcv_spend = ValueCommitRandomness::random(OsRng);
         let rcv_output = ValueCommitRandomness::random(OsRng);
         
-        let cv_spend = ValueCommit::new(1000, &rcv_spend);
-        let cv_output = ValueCommit::new(1000, &rcv_output);
+        let _cv_spend = ValueCommit::new(1000, &rcv_spend);
+        let _cv_output = ValueCommit::new(1000, &rcv_output);
         
         // Binding signing key = rcv_spend - rcv_output
         let bsk = BindingSigningKey(rcv_spend.0 - rcv_output.0);

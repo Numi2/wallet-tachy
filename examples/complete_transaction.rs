@@ -8,9 +8,10 @@
 //! 4. The network verifies the proof and accepts the transaction
 //! 5. Bob can later spend his note using the same process
 
-#![cfg(feature = "tachystamps")]
-
+#[cfg(feature = "tachystamps")]
 use rand::rngs::OsRng;
+
+#[cfg(feature = "tachystamps")]
 use tachy_wallet::{
     // Note structures
     TachyonNote,
@@ -34,6 +35,7 @@ use tachy_wallet::{
     TachyonTxBuilder,
 };
 
+#[cfg(feature = "tachystamps")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Tachyon Complete Transaction Example ===\n");
 
@@ -202,3 +204,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[cfg(not(feature = "tachystamps"))]
+fn main() {
+    eprintln!("This example requires the 'tachystamps' feature.");
+    eprintln!("Run with: cargo run --example complete_transaction --features tachystamps");
+    std::process::exit(1);
+}

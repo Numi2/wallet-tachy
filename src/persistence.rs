@@ -27,7 +27,7 @@
 
 use chacha20poly1305::{
     aead::{Aead, KeyInit, OsRng},
-    Key as AeadKey, XChaCha20Poly1305, XNonce,
+    XChaCha20Poly1305, XNonce,
 };
 use hkdf::Hkdf;
 use rand::RngCore;
@@ -181,11 +181,11 @@ struct EncryptionKey([u8; 32]);
 impl EncryptionKey {
     /// Encrypt data with deterministic nonce derived from context.
     fn encrypt(&self, plaintext: &[u8], context: &[u8]) -> Result<Vec<u8>, PersistenceError> {
-        let cipher = XChaCha20Poly1305::new(AeadKey::from_slice(&self.0));
+        let cipher = XChaCha20Poly1305::new((&self.0).into());
 
         // Derive deterministic nonce from context using BLAKE3
         let nonce_bytes = blake3::derive_key("zcash-tachyon-nonce", context);
-        let nonce = XNonce::from_slice(&nonce_bytes[..24]);
+        let nonce: &XNonce = (&nonce_bytes[..24]).into();
 
         cipher
             .encrypt(nonce, plaintext)
@@ -194,11 +194,11 @@ impl EncryptionKey {
 
     /// Decrypt data with deterministic nonce derived from context.
     fn decrypt(&self, ciphertext: &[u8], context: &[u8]) -> Result<Vec<u8>, PersistenceError> {
-        let cipher = XChaCha20Poly1305::new(AeadKey::from_slice(&self.0));
+        let cipher = XChaCha20Poly1305::new((&self.0).into());
 
         // Derive same deterministic nonce
         let nonce_bytes = blake3::derive_key("zcash-tachyon-nonce", context);
-        let nonce = XNonce::from_slice(&nonce_bytes[..24]);
+        let nonce: &XNonce = (&nonce_bytes[..24]).into();
 
         cipher
             .decrypt(nonce, ciphertext)

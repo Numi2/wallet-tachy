@@ -47,6 +47,28 @@ ureq = { version = "2.9", features = ["json"] }
 reddsa = "0.5.1"
 # halo2curves is declared below with target-specific asm gating
 nova-snark = { version = "0.39", default-features = false }
+bellpepper-core = "0.4"
+bellpepper = "0.4"
+
+# Serialization for share wrapping (used in export.rs)
+bincode = { version = "2.0.0-rc.3", features = ["serde"] }
+
+# Arkworks for Groth16 circuits & zk-friendly primitives
+ark-std = "0.4"
+ark-ff = "0.4"
+ark-ec = "0.4"
+ark-relations = "0.4"
+ark-serialize = "0.4"
+ark-bls12-381 = "0.4"
+ark-groth16 = "0.4"
+ark-r1cs-std = "0.4"
+ark-crypto-primitives = { version = "0.4", default-features = false, features = ["r1cs", "merkle_tree", "crh"] }
+
+# Pasta curves for Nova (Pallas/Vesta)
+ark-pallas = "0.4"
+ark-vesta = "0.4"
+# Poseidon hash - zk-friendly hash function for Zcash Orchard/Tachyon
+# poseidon-ark = { version = "0.0.9", features = ["r1cs"] }  # Not available on crates.io
 
 [features]
 default = []
@@ -71,48 +93,21 @@ zip324-full = []
 version = "0.1.0"
 optional = true
 
-# Serialization for share wrapping (used in export.rs)
-bincode = { version = "2.0.0-rc.3", features = ["serde"] }
-
-# Arkworks for Groth16 circuits & zk-friendly primitives
-ark-std = "0.4"
-ark-ff = "0.4"
-ark-ec = "0.4"
-ark-relations = "0.4"
-ark-serialize = "0.4"
-ark-bls12-381 = "0.4"
-ark-groth16 = "0.4"
-ark-r1cs-std = "0.4"
-ark-crypto-primitives = { version = "0.4", default-features = false, features = ["r1cs", "merkle_tree", "crh"] }
-
-# Pasta curves for Nova (Pallas/Vesta)
-ark-pallas = "0.4"
-ark-vesta = "0.4"
-# Poseidon hash - zk-friendly hash function for Zcash Orchard/Tachyon
-poseidon-ark = { version = "0.0.9", features = ["r1cs"] }
-
-# Nova for PCD/recursion over Pasta curves (as per Sean Bowe's vision)
-# NOTE: Uses halo2curves 0.8 internally; we override it below to disable asm on non-x86_64
-# halo2curves 0.6 is used directly by our code above
-
-# RedPallas signatures (RedDSA over Pallas) for tachyactions
-reddsa = "0.5"
-
 # Zcash ecosystem (commented out until needed for OOB integration)
 # orchard = "0.7"
 # zcash_protocol = "0.1"
 # pqcrypto-mlkem = "0.5"
 
-# Override nova-snark's halo2curves 0.8 dependency to disable asm by default
+# Override nova-snark's halo2curves dependency to disable asm by default
 # This prevents build failures on non-x86_64 targets (e.g., Apple Silicon)
 [dependencies.halo2curves]
-version = "0.8"
+version = "0.6"
 default-features = false
 features = ["bits", "derive_serde", "bn256-table"]
 
 # Enable asm feature only on x86_64 for performance
 [target.'cfg(target_arch = "x86_64")'.dependencies]
-halo2curves = { version = "0.8", default-features = false, features = ["bits", "derive_serde", "bn256-table", "asm"] }
+halo2curves = { version = "0.6", default-features = false, features = ["bits", "derive_serde", "bn256-table", "asm"] }
 
 [lib]
 name = "tachy_wallet"

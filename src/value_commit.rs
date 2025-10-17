@@ -35,7 +35,7 @@
 
 use group::{Group, GroupEncoding};
 use group::ff::FromUniformBytes;
-use halo2curves::pasta::{Pallas as PallasPoint, PallasAffine, Fq as PallasScalar};
+use halo2curves::pasta::{pallas, Fq as PallasScalar};
 use halo2curves::ff::{Field, PrimeField};
 use rand::{RngCore, CryptoRng};
 use reddsa::{Signature, SigningKey, VerificationKey};
@@ -57,7 +57,7 @@ const DS_BINDING_SIG: &[u8] = b"zcash-tachyon-binding-sig-v1";
 lazy_static::lazy_static! {
     /// Fixed generator V for value commitments
     /// Derived deterministically from "zcash-tachyon-value-generator"
-    pub static ref VALUE_GENERATOR: PallasPoint = {
+    pub static ref VALUE_GENERATOR: pallas::Point = {
         let hash = blake2b_simd::Params::new()
             .hash_length(64)
             .personal(b"ZcashTachyonV")
@@ -69,12 +69,12 @@ lazy_static::lazy_static! {
         let mut wide = [0u8; 64];
         wide.copy_from_slice(hash.as_bytes());
         let scalar = PallasScalar::from_uniform_bytes(&wide);
-        PallasPoint::generator() * scalar
+        pallas::Point::generator() * scalar
     };
     
     /// Fixed generator R for randomness in value commitments
     /// Derived deterministically from "zcash-tachyon-randomness-generator"
-    pub static ref RANDOMNESS_GENERATOR: PallasPoint = {
+    pub static ref RANDOMNESS_GENERATOR: pallas::Point = {
         let hash = blake2b_simd::Params::new()
             .hash_length(64)
             .personal(b"ZcashTachyonR")
@@ -85,7 +85,7 @@ lazy_static::lazy_static! {
         let mut wide = [0u8; 64];
         wide.copy_from_slice(hash.as_bytes());
         let scalar = PallasScalar::from_uniform_bytes(&wide);
-        PallasPoint::generator() * scalar
+        pallas::Point::generator() * scalar
     };
 }
 
@@ -151,20 +151,20 @@ impl ValueCommit {
         let commitment = *VALUE_GENERATOR * value_scalar + *RANDOMNESS_GENERATOR * rcv.0;
         
         // Serialize as compressed point (32 bytes)
-        let affine = PallasAffine::from(commitment);
+        let affine = pallas::Affine::from(commitment);
         Self(affine.to_bytes().into())
     }
     
     /// Get the curve point representation
-    pub fn to_point(&self) -> Option<PallasPoint> {
-        PallasAffine::from_bytes(&self.0.into())
+    pub fn to_point(&self) -> Option<pallas::Point> {
+        pallas::Affine::from_bytes(&self.0.into())
             .into_option()
-            .map(PallasPoint::from)
+            .map(pallas::Point::from)
     }
     
     /// From curve point
-    pub fn from_point(point: &PallasPoint) -> Self {
-        let affine = PallasAffine::from(*point);
+    pub fn from_point(point: &pallas::Point) -> Self {
+        let affine = pallas::Affine::from(*point);
         Self(affine.to_bytes().into())
     }
 }
@@ -231,15 +231,15 @@ impl BindingVerifyingKey {
     pub fn from_signing_key(bsk: &BindingSigningKey) -> Self {
         // bvk = [bsk]R
         let point = *RANDOMNESS_GENERATOR * bsk.0;
-        let affine = PallasAffine::from(point);
+        let affine = pallas::Affine::from(point);
         Self(affine.to_bytes().into())
     }
     
     /// Get the curve point representation
-    pub fn to_point(&self) -> Option<PallasPoint> {
-        PallasAffine::from_bytes(&self.0.into())
+    pub fn to_point(&self) -> Option<pallas::Point> {
+        pallas::Affine::from_bytes(&self.0.into())
             .into_option()
-            .map(PallasPoint::from)
+            .map(pallas::Point::from)
     }
 }
 
@@ -358,7 +358,7 @@ pub fn sum_value_commitments(commitments: &[ValueCommit]) -> Option<ValueCommit>
         return None;
     }
     
-    let points: Vec<PallasPoint> = commitments
+    let points: Vec<pallas::Point> = commitments
         .iter()
         .filter_map(|cv| cv.to_point())
         .collect();
@@ -367,7 +367,7 @@ pub fn sum_value_commitments(commitments: &[ValueCommit]) -> Option<ValueCommit>
         return None; // Some commitment was invalid
     }
     
-    let sum = points.iter().fold(PallasPoint::identity(), |acc, p| acc + p);
+    let sum = points.iter().fold(pallas::Point::identity(), |acc, p| acc + p);
     Some(ValueCommit::from_point(&sum))
 }
 
@@ -391,7 +391,7 @@ pub fn derive_binding_verifying_key_from_commitments(
     let net = spend_point - output_point;
     
     // This net should equal [bsk]R
-    let affine = PallasAffine::from(net);
+    let affine = pallas::Affine::from(net);
     Some(BindingVerifyingKey(affine.to_bytes().into()))
 }
 

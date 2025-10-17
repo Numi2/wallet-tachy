@@ -23,7 +23,6 @@ use blake2b_simd::Params as Blake2bParams;
 use reddsa::{Signature, VerificationKey};
 use reddsa::orchard::SpendAuth;
 use serde::{Deserialize, Serialize};
-use std::io::Write;
 use subtle::{Choice, ConstantTimeEq};
 use thiserror::Error;
 
@@ -45,7 +44,7 @@ const DS_BINDING_SIG: &[u8] = b"zcash-tachyon-binding-sig-v1";
 /// In Tachyon, nullifiers are derived such that they do NOT reveal the note's
 /// position in the Merkle tree (unlike traditional Zcash). This enables oblivious
 /// synchronization without leaking note locations to sync services.
-#[derive(Clone, Copy, Debug, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, Serialize, Deserialize)]
 pub struct Nullifier(pub [u8; 32]);
 
 impl PartialEq for Nullifier {
@@ -57,6 +56,12 @@ impl PartialEq for Nullifier {
 impl ConstantTimeEq for Nullifier {
     fn ct_eq(&self, other: &Self) -> Choice {
         self.0.ct_eq(&other.0)
+    }
+}
+
+impl std::hash::Hash for Nullifier {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
     }
 }
 

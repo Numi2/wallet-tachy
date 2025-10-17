@@ -46,10 +46,10 @@
 use blake2b_simd::Params as Blake2bParams;
 use chacha20poly1305::{
     aead::{Aead, KeyInit},
-    ChaCha20Poly1305, Key, Nonce,
+    ChaCha20Poly1305,
 };
 use group::{Group, GroupEncoding};
-use halo2curves::pasta::{Pallas as PallasPoint, PallasAffine, Fq as PallasScalar};
+use halo2curves::pasta::{pallas, Fq as PallasScalar};
 use halo2curves::ff::{Field, PrimeField};
 use rand::{RngCore, CryptoRng};
 use serde::{Deserialize, Serialize};
@@ -94,8 +94,8 @@ impl EphemeralSecretKey {
     
     /// Derive ephemeral public key: epk = [esk]G
     pub fn derive_public_key(&self) -> EphemeralPublicKey {
-        let point = PallasPoint::generator() * self.0;
-        let affine = PallasAffine::from(point);
+        let point = pallas::Point::generator() * self.0;
+        let affine = pallas::Affine::from(point);
         EphemeralPublicKey(affine.to_bytes().into())
     }
     
@@ -103,12 +103,12 @@ impl EphemeralSecretKey {
     ///
     /// Returns [esk]pk_d
     pub fn shared_secret(&self, pk_d: &[u8; 32]) -> Option<SharedSecret> {
-        let pk_point = PallasAffine::from_bytes(&(*pk_d).into())
-            .map(PallasPoint::from)
+        let pk_point = pallas::Affine::from_bytes(&(*pk_d).into())
+            .map(pallas::Point::from)
             .into_option()?;
         
         let shared = pk_point * self.0;
-        let affine = PallasAffine::from(shared);
+        let affine = pallas::Affine::from(shared);
         Some(SharedSecret(affine.to_bytes().into()))
     }
 }
@@ -186,13 +186,13 @@ impl IncomingViewingKey {
         let ivk_scalar = PallasScalar::from_repr(self.0.into()).into_option()?;
         
         // Parse epk as point
-        let epk_point = PallasAffine::from_bytes(&epk.0.into())
-            .map(PallasPoint::from)
+        let epk_point = pallas::Affine::from_bytes(&epk.0.into())
+            .map(pallas::Point::from)
             .into_option()?;
         
         // Compute [ivk]epk
         let shared = epk_point * ivk_scalar;
-        let affine = PallasAffine::from(shared);
+        let affine = pallas::Affine::from(shared);
         Some(SharedSecret(affine.to_bytes().into()))
     }
     
@@ -342,9 +342,9 @@ pub fn encrypt_note(
     
     // Encrypt plaintext with ZERO nonce (security via unique esk per output)
     let plaintext_bytes = plaintext.to_bytes();
-    let cipher = ChaCha20Poly1305::new(Key::from_slice(&enc_key.0));
+    let cipher = ChaCha20Poly1305::new((&enc_key.0).into());
     let ciphertext = cipher
-        .encrypt(Nonce::from_slice(&ZERO_NONCE), plaintext_bytes.as_ref())
+        .encrypt((&ZERO_NONCE).into(), plaintext_bytes.as_ref())
         .map_err(|_| NoteEncryptionError::EncryptionFailed)?;
     
     Ok((epk, ciphertext))
@@ -372,9 +372,9 @@ pub fn decrypt_note(
     let enc_key = shared_secret.derive_encryption_key(epk);
     
     // Decrypt with ZERO nonce
-    let cipher = ChaCha20Poly1305::new(Key::from_slice(&enc_key.0));
+    let cipher = ChaCha20Poly1305::new((&enc_key.0).into());
     let plaintext_bytes = cipher
-        .decrypt(Nonce::from_slice(&ZERO_NONCE), ciphertext)
+        .decrypt((&ZERO_NONCE).into(), ciphertext)
         .map_err(|_| NoteEncryptionError::DecryptionFailed)?;
     
     // Parse plaintext
@@ -457,8 +457,8 @@ mod tests {
         
         // Derive pk_d from ivk (simplified - in reality more complex)
         let ivk_scalar = PallasScalar::from_repr(ivk.0).unwrap();
-        let pk_d_point = PallasPoint::generator() * ivk_scalar;
-        let pk_d = DiversifiedTransmissionKey(PallasAffine::from(pk_d_point).to_bytes());
+        let pk_d_point = pallas::Point::generator() * ivk_scalar;
+        let pk_d = DiversifiedTransmissionKey(pallas::Affine::from(pk_d_point).to_bytes());
         
         let epk = esk.derive_public_key();
         
@@ -480,8 +480,8 @@ mod tests {
         
         // Derive pk_d from ivk
         let ivk_scalar = PallasScalar::from_repr(ivk.0).unwrap();
-        let pk_d_point = PallasPoint::generator() * ivk_scalar;
-        let pk_d = DiversifiedTransmissionKey(PallasAffine::from(pk_d_point).to_bytes());
+        let pk_d_point = pallas::Point::generator() * ivk_scalar;
+        let pk_d = DiversifiedTransmissionKey(pallas::Affine::from(pk_d_point).to_bytes());
         
         // Encrypt
         let (epk, ciphertext) = encrypt_note(&plaintext, &pk_d, &esk).unwrap();
@@ -508,7 +508,7 @@ mod tests {
         let ivk1 = IncomingViewingKey::random(OsRng);
         let ivk_scalar1 = PallasScalar::from_repr(ivk1.0).unwrap();
         let pk_d = DiversifiedTransmissionKey(
-            PallasAffine::from(PallasPoint::generator() * ivk_scalar1).to_bytes()
+            pallas::Affine::from(pallas::Point::generator() * ivk_scalar1).to_bytes()
         );
         
         // Different recipient key

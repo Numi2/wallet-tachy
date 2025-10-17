@@ -47,7 +47,7 @@
 //! ```
 
 use group::{Group, GroupEncoding};
-use halo2curves::pasta::{Pallas as PallasPoint, PallasAffine, Fq as PallasScalar};
+use halo2curves::pasta::{pallas, Fq as PallasScalar};
 use halo2curves::ff::{Field, PrimeField};
 use rand::{RngCore, CryptoRng};
 use reddsa::{Signature, SigningKey, VerificationKey};
@@ -120,8 +120,8 @@ impl SpendAuthorizationVerifyingKey {
     /// Derive from signing key
     pub fn from_signing_key(ask: &SpendAuthorizationKey) -> Self {
         // ak = [ask]G
-        let point = PallasPoint::generator() * ask.0;
-        let affine = PallasAffine::from(point);
+        let point = pallas::Point::generator() * ask.0;
+        let affine = pallas::Affine::from(point);
         Self(affine.to_bytes().into())
     }
     
@@ -130,25 +130,25 @@ impl SpendAuthorizationVerifyingKey {
     /// Returns rk = ak + [α]G
     pub fn randomize(&self, alpha: &Randomizer) -> RandomizedVerifyingKey {
         // Parse ak as a point
-        let ak_point = PallasAffine::from_bytes(&self.0.into())
-            .map(PallasPoint::from)
+        let ak_point = pallas::Affine::from_bytes(&self.0.into())
+            .map(pallas::Point::from)
             .expect("valid ak point");
         
         // Compute [α]G
-        let alpha_point = PallasPoint::generator() * alpha.0;
+        let alpha_point = pallas::Point::generator() * alpha.0;
         
         // rk = ak + [α]G
         let rk_point = ak_point + alpha_point;
-        let rk_affine = PallasAffine::from(rk_point);
+        let rk_affine = pallas::Affine::from(rk_point);
         
         RandomizedVerifyingKey(rk_affine.to_bytes().into())
     }
     
     /// Convert to curve point
-    pub fn to_point(&self) -> Option<PallasPoint> {
-        PallasAffine::from_bytes(&self.0.into())
+    pub fn to_point(&self) -> Option<pallas::Point> {
+        pallas::Affine::from_bytes(&self.0.into())
             .into_option()
-            .map(PallasPoint::from)
+            .map(pallas::Point::from)
     }
 }
 
@@ -392,8 +392,8 @@ mod tests {
         // rk should equal ak when α = 0
         // Convert both to points and compare
         let ak_point = ak.to_point().unwrap();
-        let rk_point = PallasAffine::from_bytes(&rk.0)
-            .map(PallasPoint::from)
+        let rk_point = pallas::Affine::from_bytes(&rk.0)
+            .map(pallas::Point::from)
             .unwrap();
         
         assert_eq!(ak_point, rk_point);

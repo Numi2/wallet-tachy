@@ -28,15 +28,15 @@ use thiserror::Error;
 
 // ----------------------------- Domain Separation Tags -----------------------------
 
-/// Domain tag for Traditional Action signature digests
-const DS_TRADITIONAL_ACTION: &[u8] = b"zcash-tachyon-trad-action-v1";
+/// Domain tag for Traditional Action signature digests (Blake2b personalization limited to 16 bytes)
+const DS_TRADITIONAL_ACTION: &[u8] = b"TachyTradAct-v1 "; // 16 bytes
 
 /// Domain tag for Tachyaction signature digests
-const DS_TACHYACTION: &[u8] = b"zcash-tachyon-tachyaction-v1";
+const DS_TACHYACTION: &[u8] = b"TachyAction-v1  "; // 16 bytes
 
 /// Domain tag for binding signature
 #[allow(dead_code)]
-const DS_BINDING_SIG: &[u8] = b"zcash-tachyon-binding-sig-v1";
+const DS_BINDING_SIG: &[u8] = b"TachyBindSig-v1 "; // 16 bytes
 
 // ----------------------------- Fixed-Size Newtypes -----------------------------
 

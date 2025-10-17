@@ -48,13 +48,13 @@ use thiserror::Error;
 
 // ----------------------------- Constants -----------------------------
 
-/// Domain tag for value commitment
+/// Domain tag for value commitment (Blake2b personalization limited to 16 bytes)
 #[allow(dead_code)]
-const DS_VALUE_COMMIT: &[u8] = b"zcash-tachyon-value-commit-v1";
+const DS_VALUE_COMMIT: &[u8] = b"TachyValCom-v1  "; // 16 bytes
 
 /// Domain tag for binding signature
 #[allow(dead_code)]
-const DS_BINDING_SIG: &[u8] = b"zcash-tachyon-binding-sig-v1";
+const DS_BINDING_SIG: &[u8] = b"TachyBindSig-v1 "; // 16 bytes
 
 // ----------------------------- Generators -----------------------------
 

@@ -40,40 +40,93 @@ use blake2b_simd::Params as Blake2bParams;
 // use pqcrypto_mlkem::mlkem768;
 #[allow(dead_code)]
 mod mlkem768 {
-    // Placeholder module until dependency is added
-    pub struct PublicKey;
+    // Placeholder module until pqcrypto-mlkem dependency is added
+    // For testing, we use deterministic placeholder values matching ML-KEM-768 sizes
+    
+    // ML-KEM-768 sizes from NIST specification
+    const PK_SIZE: usize = 1184;
+    const SK_SIZE: usize = 2400;
+    const CT_SIZE: usize = 1088;
+    const SS_SIZE: usize = 32;
+    
+    pub struct PublicKey(Vec<u8>);
     impl PublicKey {
-        pub fn from_bytes(_bytes: &[u8]) -> Result<Self, ()> { Err(()) }
-        pub fn as_bytes(&self) -> Vec<u8> { vec![] }
+        pub fn from_bytes(bytes: &[u8]) -> Result<Self, ()> {
+            if bytes.len() == PK_SIZE {
+                Ok(Self(bytes.to_vec()))
+            } else {
+                Err(())
+            }
+        }
+        pub fn as_bytes(&self) -> Vec<u8> { self.0.clone() }
     }
     
-    pub struct SecretKey;
+    pub struct SecretKey(Vec<u8>);
     impl SecretKey {
-        pub fn from_bytes(_bytes: &[u8]) -> Result<Self, ()> { Err(()) }
-        pub fn as_bytes(&self) -> Vec<u8> { vec![] }
+        pub fn from_bytes(bytes: &[u8]) -> Result<Self, ()> {
+            if bytes.len() == SK_SIZE {
+                Ok(Self(bytes.to_vec()))
+            } else {
+                Err(())
+            }
+        }
+        pub fn as_bytes(&self) -> Vec<u8> { self.0.clone() }
     }
     
-    pub struct Ciphertext;
+    pub struct Ciphertext(Vec<u8>);
     impl Ciphertext {
-        pub fn from_bytes(_bytes: &[u8]) -> Result<Self, ()> { Err(()) }
-        pub fn as_bytes(&self) -> Vec<u8> { vec![] }
+        pub fn from_bytes(bytes: &[u8]) -> Result<Self, ()> {
+            if bytes.len() == CT_SIZE {
+                Ok(Self(bytes.to_vec()))
+            } else {
+                Err(())
+            }
+        }
+        pub fn as_bytes(&self) -> Vec<u8> { self.0.clone() }
     }
     
-    pub struct SharedSecret;
+    pub struct SharedSecret([u8; SS_SIZE]);
     impl SharedSecret {
-        pub fn as_bytes(&self) -> Vec<u8> { vec![0u8; 32] }
+        pub fn as_bytes(&self) -> Vec<u8> { self.0.to_vec() }
+    }
+    
+    impl PublicKey {
+        pub fn new() -> Self {
+            Self(vec![1u8; PK_SIZE])
+        }
+    }
+    
+    impl SecretKey {
+        pub fn new() -> Self {
+            Self(vec![2u8; SK_SIZE])
+        }
+    }
+    
+    impl Ciphertext {
+        pub fn new() -> Self {
+            Self(vec![4u8; CT_SIZE])
+        }
+    }
+    
+    impl SharedSecret {
+        pub fn new() -> Self {
+            Self([3u8; SS_SIZE])
+        }
     }
     
     pub fn keypair() -> (PublicKey, SecretKey) {
-        (PublicKey, SecretKey)
+        // Generate placeholder keys with correct sizes for testing
+        (PublicKey::new(), SecretKey::new())
     }
     
     pub fn encapsulate(_pk: &PublicKey) -> (SharedSecret, Ciphertext) {
-        (SharedSecret, Ciphertext)
+        // Placeholder encapsulation for testing
+        (SharedSecret::new(), Ciphertext::new())
     }
     
     pub fn decapsulate(_ct: &Ciphertext, _sk: &SecretKey) -> SharedSecret {
-        SharedSecret
+        // Placeholder decapsulation for testing
+        SharedSecret::new()
     }
 }
 use rand::{CryptoRng, RngCore};
@@ -90,11 +143,11 @@ use crate::notes::{CommitmentKey, Nonce, NullifierFlavor, PaymentKey};
 #[allow(dead_code)]
 const SHARED_SECRET_SIZE: usize = 32 + 32; // 64 bytes total
 
-/// Domain tags for KDF
-const DS_OOB_KDF: &[u8] = b"Tachyon-v1-OOB-KDF";
-const DS_NOTE_PSI: &[u8] = b"Tachyon-v1-OOB-Psi";
-const DS_NOTE_RCM: &[u8] = b"Tachyon-v1-OOB-Rcm";
-const DS_NOTE_FLAVOR: &[u8] = b"Tachyon-v1-OOB-Flavor";
+/// Domain tags for KDF (Blake2b personalization limited to 16 bytes)
+const DS_OOB_KDF: &[u8] = b"TachyOOB-KDF-v1 "; // 16 bytes
+const DS_NOTE_PSI: &[u8] = b"TachyOOB-Psi-v1 "; // 16 bytes
+const DS_NOTE_RCM: &[u8] = b"TachyOOB-Rcm-v1 "; // 16 bytes
+const DS_NOTE_FLAVOR: &[u8] = b"TachyOOB-Flavor "; // 16 bytes
 
 // ----------------------------- Key Types -----------------------------
 
@@ -172,8 +225,8 @@ impl OobSecretKeys {
 
         // Generate ML-KEM-768 keypair (placeholder until dependency added)
         #[allow(unused_variables)]
-        let mlkem_pk = mlkem768::PublicKey;
-        let mlkem_sk = mlkem768::SecretKey;
+        let mlkem_pk = mlkem768::PublicKey::new();
+        let mlkem_sk = mlkem768::SecretKey::new();
 
         // Generate payment key
         let payment_key = PaymentKey::random(&mut rng);
@@ -345,8 +398,8 @@ pub fn encapsulate_payment(
     let mlkem_pk = mlkem768::PublicKey::from_bytes(&receiver_pks.mlkem_pk)
         .map_err(|_| OobKemError::EncapsulationFailed)?;
     // Placeholder until pqcrypto-mlkem dependency is added
-    let ss_mlkem = mlkem768::SharedSecret;
-    let ct_mlkem = mlkem768::Ciphertext;
+    let ss_mlkem = mlkem768::SharedSecret::new();
+    let ct_mlkem = mlkem768::Ciphertext::new();
 
     // 4. Combine shared secrets with KDF
     let combined_secret = kdf_combine(ss_x25519.as_bytes(), &ss_mlkem.as_bytes())?;
@@ -387,7 +440,7 @@ pub fn decapsulate_payment(
     #[allow(unused_variables)]
     let (mlkem_sk, ct_mlkem) = (_mlkem_sk, _ct_mlkem); // Satisfy future usage
     // Placeholder until pqcrypto-mlkem dependency is added
-    let ss_mlkem = mlkem768::SharedSecret;
+    let ss_mlkem = mlkem768::SharedSecret::new();
 
     // 4. Combine shared secrets with KDF
     let combined_secret = kdf_combine(ss_x25519.as_bytes(), &ss_mlkem.as_bytes())?;

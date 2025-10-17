@@ -52,12 +52,12 @@ pub const ASSET_ID_ZEC: AssetId = AssetId([0u8; 32]);
 /// Maximum asset descriptor length
 pub const MAX_ASSET_DESCRIPTOR_LEN: usize = 256;
 
-/// Domain tag for asset ID derivation
-const DS_ASSET_ID: &[u8] = b"Tachyon-v1-AssetID";
+/// Domain tag for asset ID derivation (Blake2b personalization limited to 16 bytes)
+const DS_ASSET_ID: &[u8] = b"TachyAssetID-v1 "; // 16 bytes
 
 /// Domain tag for asset-specific generator
 #[allow(dead_code)]
-const DS_ASSET_GEN: &[u8] = b"Tachyon-v1-AssetGen";
+const DS_ASSET_GEN: &[u8] = b"TachyAssetGen-v1"; // 16 bytes
 
 // ----------------------------- Types -----------------------------
 
@@ -184,7 +184,7 @@ impl MultiAssetValueCommitment {
         // with asset-specific generator points
         let mut hasher = Blake2bParams::new()
             .hash_length(32)
-            .personal(b"Tachyon-MultiAsset-CV")
+            .personal(b"TachyAssetCV-v1 ") // 16 bytes
             .to_state();
 
         hasher.update(&asset_id.0);

@@ -46,8 +46,8 @@ pub struct Compressed {
 
 // ----------------------------- Constants -----------------------------
 
-/// Domain tag for bundle binding signature
-const DS_BUNDLE_BINDING: &[u8] = b"zcash-tachyon-bundle-binding-v1";
+/// Domain tag for bundle binding signature (Blake2b personalization limited to 16 bytes)
+const DS_BUNDLE_BINDING: &[u8] = b"TachyBndBind-v1 "; // 16 bytes
 
 /// Maximum number of actions per bundle (consensus rule)
 const MAX_ACTIONS_PER_BUNDLE: usize = 50;
@@ -225,7 +225,7 @@ impl TachyBundle {
     pub fn binding_data(&self) -> Vec<u8> {
         let mut hasher = Blake2bParams::new()
             .hash_length(32)
-            .personal(b"zcash-tachyon-bundle-ctx")
+            .personal(b"TachyBndCtx-v1  ") // 16 bytes
             .to_state();
         
         // Include anchor if present

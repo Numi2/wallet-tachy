@@ -119,7 +119,7 @@ impl NullifierKey {
     pub fn from_seed(seed: &[u8], context: &[u8]) -> Self {
         let hash = Blake2bParams::new()
             .hash_length(32)
-            .personal(b"zcash-tachyon-nk-derive")
+            .personal(b"ZcashTachyonNK  ") // 16 bytes: nullifier key derivation
             .to_state()
             .update(context)
             .update(seed)
@@ -161,7 +161,7 @@ impl PaymentKey {
     pub fn from_seed(seed: &[u8], context: &[u8]) -> Self {
         let hash = Blake2bParams::new()
             .hash_length(32)
-            .personal(b"zcash-tachyon-pk-derive")
+            .personal(b"ZcashTachyonPK  ") // 16 bytes: payment key derivation
             .to_state()
             .update(context)
             .update(seed)
@@ -416,7 +416,7 @@ pub fn derive_note_secrets(shared_secret: &[u8]) -> (Nonce, CommitmentKey, Nulli
     let psi = {
         let hash = Blake2bParams::new()
             .hash_length(32)
-            .personal(b"zcash-tachyon-derive-psi")
+            .personal(b"ZcashTachyonPsi ") // 16 bytes: note psi derivation
             .to_state()
             .update(shared_secret)
             .finalize();
@@ -428,7 +428,7 @@ pub fn derive_note_secrets(shared_secret: &[u8]) -> (Nonce, CommitmentKey, Nulli
     let rcm = {
         let hash = Blake2bParams::new()
             .hash_length(32)
-            .personal(b"zcash-tachyon-derive-rcm")
+            .personal(b"ZcashTachyonRcm ") // 16 bytes: note rcm derivation
             .to_state()
             .update(shared_secret)
             .finalize();
@@ -440,7 +440,7 @@ pub fn derive_note_secrets(shared_secret: &[u8]) -> (Nonce, CommitmentKey, Nulli
     let flavor = {
         let hash = Blake2bParams::new()
             .hash_length(32)
-            .personal(b"zcash-tachyon-drv-flavor")
+            .personal(b"ZcashTachyonFlav") // 16 bytes: note flavor derivation
             .to_state()
             .update(shared_secret)
             .finalize();

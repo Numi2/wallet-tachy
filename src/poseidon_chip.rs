@@ -477,13 +477,15 @@ pub mod native {
         fn partial_round(state: &mut [PallasFp; WIDTH], round: usize) {
             let rcs = &ROUND_CONSTANTS[round];
             
-            // Add round constant to first element
-            state[0] += rcs[0];
+            // Add round constants to ALL state elements (Poseidon spec)
+            for i in 0..WIDTH {
+                state[i] += rcs[i];
+            }
             
-            // Apply S-box only to first element
+            // Apply S-box ONLY to first element (partial round)
             state[0] = Self::sbox(state[0]);
             
-            // Apply MDS
+            // Apply MDS to all elements
             Self::apply_mds(state);
         }
         

@@ -4,7 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# Note: Removed blake3 - not zk-friendly. Using Poseidon instead.
+# Core cryptographic primitives
+# Note: Blake3 for out-of-circuit hashing; Poseidon for in-circuit proofs
+blake3 = "1.5"
+zeroize = { version = "1.7", features = ["derive"] }
+subtle = "2.5"
+byteorder = "1.5"
 chacha20poly1305 = { version = "0.10", features = ["std"] }
 hkdf = "0.12"
 rand = "0.8"
@@ -14,6 +19,7 @@ argon2 = "0.5"
 serde = { version = "1.0", features = ["derive"] }
 serde_cbor = "0.11"
 thiserror = "1.0"
+anyhow = "1.0"
 
 # Additional deps for ZIP-321/324, URIs, storage, encoding
 percent-encoding = "2"
@@ -33,10 +39,28 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 serde_json = "1"
 zcash_address = "0.5"
 ureq = { version = "2.9", features = ["json"] }
+reddsa = "0.5.1"
+halo2curves = "0.6"
+nova-snark = "0.39"
 
 [features]
 default = []
 zip321_crate = ["dep:zip321"]
+
+# Tachystamps require Nova, halo2curves, and reddsa
+tachystamps = []
+
+# Oblivious sync requires tachystamps
+oblivious-sync = ["tachystamps"]
+
+# Recovery features (already working)
+recovery = []
+
+# Out-of-band payment features (blocked on external deps)
+oob = []
+
+# Full ZIP-324 support (requires external deps)
+zip324-full = []
 
 [dependencies.zip321]
 version = "0.1.0"
@@ -59,6 +83,9 @@ ark-crypto-primitives = { version = "0.4", default-features = false, features = 
 # Pasta curves for Nova (Pallas/Vesta)
 ark-pallas = "0.4"
 ark-vesta = "0.4"
+# Multiple versions needed: 0.6 for our code, 0.8 for nova-snark
+# Both with asm disabled for non-x86_64 compatibility
+halo2curves = { version = "0.6", default-features = false, features = ["bits", "derive_serde"] }
 
 # Poseidon hash - zk-friendly hash function for Zcash Orchard/Tachyon
 poseidon-ark = { version = "0.0.9", features = ["r1cs"] }
@@ -66,8 +93,19 @@ poseidon-ark = { version = "0.0.9", features = ["r1cs"] }
 # Nova for PCD/recursion over Pasta curves (as per Sean Bowe's vision)
 nova-snark = { version = "0.39", default-features = false }
 
+# Explicit dependency to override nova's halo2curves with asm disabled
+[dependencies.halo2curves-compat]
+package = "halo2curves"
+version = "0.8"
+default-features = false
+
 # RedPallas signatures (RedDSA over Pallas) for tachyactions
 reddsa = "0.5"
+
+# Zcash ecosystem (commented out until needed for OOB integration)
+# orchard = "0.7"
+# zcash_protocol = "0.1"
+# pqcrypto-mlkem = "0.5"
 
 [lib]
 name = "tachy_wallet"

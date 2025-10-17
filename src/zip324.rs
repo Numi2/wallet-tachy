@@ -3,7 +3,8 @@ use blake2b_simd::Params as Blake2bParams;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use url::Url;
-use crate::status_db::{StatusDb, PaymentStatus, OutboundPayment};
+// TODO: Restore status_db integration once database module is implemented
+// use crate::status_db::{StatusDb, PaymentStatus, OutboundPayment};
 
 #[derive(Debug, Error)]
 pub enum Zip324Error {
@@ -81,6 +82,8 @@ pub trait FinalizeEngine {
     fn sweep_with_key_to_wallet_addr(&self, key: &[u8; 32], amount_zat: u64) -> Result<[u8; 32], String>;
 }
 
+// TODO: Re-enable once StatusDb is implemented
+#[cfg(feature = "status-db")]
 pub fn sender_create_capability<E: FinalizeEngine>(
     engine: &E,
     db: &StatusDb,
@@ -100,6 +103,8 @@ pub fn sender_create_capability<E: FinalizeEngine>(
     Ok(record)
 }
 
+// TODO: Re-enable once StatusDb is implemented
+#[cfg(feature = "status-db")]
 pub fn recipient_finalize_capability<E: FinalizeEngine>(
     engine: &E,
     db: &StatusDb,
@@ -147,6 +152,8 @@ pub fn parse_zec_amount_to_zat(s: &str) -> Result<u64, &'static str> {
 }
 
 // Recovery scanner: re-derive keys with gap limit and attempt to sweep any pending funds
+// TODO: Re-enable once StatusDb is implemented
+#[cfg(feature = "status-db")]
 pub fn recovery_scan_and_finalize<E: FinalizeEngine>(
     engine: &E,
     db: &StatusDb,

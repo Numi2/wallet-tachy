@@ -1,4 +1,4 @@
-//! Tachyon-style out-of-band Orchard note-info envelope (production-ready).
+//!Goal of this code = Tachyon-style out-of-band Orchard note-info envelope (production-ready).
 //! - UA canonical bytes (ZIP-316) bound in AAD - UA-bound: The envelope is cryptographically tied to the recipient’s Unified Address (UA). Only the UA holder can derive the decryption key.
 //! trying to also make it cmx-bound: Bound to the note commitment (cmx) of the transaction. This prevents replay or substitution attacks; the envelope can only apply to that exact note.
 //! - KDF: HKDF-SHA256 with salt = DS || H(header), info = H(kem_ct)

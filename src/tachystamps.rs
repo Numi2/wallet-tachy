@@ -579,9 +579,9 @@ impl Prover {
                 .map_err(|e| TachyError::Nova(format!("{e:?}")))?;
         let cs = CompressedSNARK::prove(&self.pp, &pk, rs)
             .map_err(|e| TachyError::Nova(format!("{e:?}")))?;
-        // serialize
-        let proof = bincode::serialize(&cs).map_err(|e| TachyError::Serde(e.to_string()))?;
-        let vk_bytes = bincode::serialize(&vk).map_err(|e| TachyError::Serde(e.to_string()))?;
+        // serialize (using serde_cbor since bincode v2 API is different)
+        let proof = serde_cbor::to_vec(&cs).map_err(|e| TachyError::Serde(e.to_string()))?;
+        let vk_bytes = serde_cbor::to_vec(&vk).map_err(|e| TachyError::Serde(e.to_string()))?;
 
         Ok(Compressed {
             proof,
@@ -597,8 +597,8 @@ impl Prover {
 
     pub fn verify(compressed: &Compressed, z0: &[PallasFp]) -> Result<bool, TachyError> {
         let cs: CompressedSNARK<PallasEngine, VestaEngine, TachyStepCircuit> =
-            bincode::deserialize(&compressed.proof).map_err(|e| TachyError::Serde(e.to_string()))?;
-        let vk = bincode::deserialize(&compressed.vk).map_err(|e| TachyError::Serde(e.to_string()))?;
+            serde_cbor::from_slice(&compressed.proof).map_err(|e| TachyError::Serde(e.to_string()))?;
+        let vk = serde_cbor::from_slice(&compressed.vk).map_err(|e| TachyError::Serde(e.to_string()))?;
         cs.verify(
             &vk,
             compressed.meta.steps,

@@ -383,6 +383,7 @@ pub fn verify_bundle(
     }
     
     // 6. Verify tachystamp proof (if present)
+    #[cfg(feature = "tachystamps")]
     if let Some(tachystamp_ref) = &bundle.tachystamp {
         verify_tachystamp_covers_actions(tachystamp_ref, &bundle.extract_commitment_key_pairs())?;
     }
@@ -412,6 +413,7 @@ pub fn verify_bundle(
 /// 2. Convert required_pairs to the same format
 /// 3. Check that all required pairs are present in authorized pairs
 /// 4. Order must match (maintain action ordering)
+#[cfg(feature = "tachystamps")]
 fn verify_tachystamp_covers_actions(
     tachystamp_ref: &TachystampReference,
     required_pairs: &[(ValueCommitment, RandomizedVerifyingKey)],

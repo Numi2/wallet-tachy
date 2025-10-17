@@ -20,10 +20,10 @@
 #![forbid(unsafe_code)]
 
 use blake2b_simd::Params as Blake2bParams;
-use reddsa::{Signature, SigningKey, VerificationKey};
+use reddsa::{Signature, VerificationKey};
 use reddsa::orchard::SpendAuth;
 use serde::{Deserialize, Serialize};
-use std::io::{self, Read, Write};
+use std::io::Write;
 use subtle::{Choice, ConstantTimeEq};
 use thiserror::Error;
 

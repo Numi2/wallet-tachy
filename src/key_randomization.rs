@@ -46,7 +46,7 @@
 //! assert!(rk.verify(message, &sig).is_ok());
 //! ```
 
-use group::{Curve, Group, GroupEncoding};
+use group::{Group, GroupEncoding};
 use halo2curves::pasta::{Pallas as PallasPoint, PallasAffine, Fq as PallasScalar};
 use halo2curves::ff::{Field, PrimeField};
 use rand::{RngCore, CryptoRng};
@@ -55,7 +55,6 @@ use reddsa::orchard::SpendAuth;
 use serde::{Deserialize, Serialize};
 use subtle::{Choice, ConstantTimeEq};
 use thiserror::Error;
-use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::actions::{RandomizedVerifyingKey, RedPallasSignature};
 

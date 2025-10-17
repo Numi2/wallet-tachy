@@ -48,14 +48,13 @@ use chacha20poly1305::{
     aead::{Aead, KeyInit},
     ChaCha20Poly1305, Key, Nonce,
 };
-use group::{Curve, Group, GroupEncoding};
+use group::{Group, GroupEncoding};
 use halo2curves::pasta::{Pallas as PallasPoint, PallasAffine, Fq as PallasScalar};
 use halo2curves::ff::{Field, PrimeField};
 use rand::{RngCore, CryptoRng};
 use serde::{Deserialize, Serialize};
 use subtle::{Choice, ConstantTimeEq};
 use thiserror::Error;
-use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::actions::EphemeralPublicKey;
 

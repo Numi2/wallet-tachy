@@ -145,7 +145,7 @@ impl BatchVerifier {
         
         for item in &self.items {
             // Convert to VerificationKeyBytes (reddsa's batch API requirement)
-            let vk_bytes = VerificationKeyBytes::from(&item.vk);
+            let vk_bytes = VerificationKeyBytes::from(item.vk.clone());
             
             // Create batch item (precomputes challenge c)
             // All our signatures are SpendAuth type

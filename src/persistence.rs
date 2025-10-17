@@ -33,16 +33,13 @@ use hkdf::Hkdf;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
-use sled::{Batch, Db, Tree};
-use std::collections::BTreeMap;
+use sled::{Db, Tree};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
-use subtle::ConstantTimeEq;
 use thiserror::Error;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 // Import Nullifier from actions - it's always available
-use crate::actions::Nullifier;
 
 #[cfg(feature = "tachystamps")]
 use crate::notes::{CommitmentKey, Nonce, NullifierKey, PaymentKey, TachyonNote};
@@ -135,7 +132,7 @@ struct MasterKey([u8; 32]);
 impl MasterKey {
     /// Derive master key from password using Argon2id.
     fn derive(password: &str, salt: &[u8; 16]) -> Result<Self, PersistenceError> {
-        use argon2::{Argon2, PasswordHasher};
+        use argon2::Argon2;
 
         let argon2 = Argon2::new(
             argon2::Algorithm::Argon2id,

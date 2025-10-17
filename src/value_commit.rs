@@ -33,18 +33,16 @@
 //! sig = Sign(bvk, message)
 //! ```
 
-use group::{Curve, Group, GroupEncoding};
+use group::{Group, GroupEncoding};
 use group::ff::FromUniformBytes;
 use halo2curves::pasta::{Pallas as PallasPoint, PallasAffine, Fq as PallasScalar};
 use halo2curves::ff::{Field, PrimeField};
-use blake2b_simd::Params as Blake2bParams;
 use rand::{RngCore, CryptoRng};
 use reddsa::{Signature, SigningKey, VerificationKey};
 use reddsa::orchard::Binding as BindingAuth;
 use serde::{Deserialize, Serialize};
-use subtle::{Choice, ConstantTimeEq, ConditionallySelectable};
+use subtle::{Choice, ConstantTimeEq};
 use thiserror::Error;
-use zeroize::Zeroize;
 
 // ----------------------------- Constants -----------------------------
 

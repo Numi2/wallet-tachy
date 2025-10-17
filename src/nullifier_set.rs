@@ -4,8 +4,6 @@
 //! - Efficient membership checks
 //! - Non-membership proofs for recent nullifiers
 //! - Automatic pruning of old nullifiers (consensus allows pruning after k blocks)
-
-#![allow(missing_docs)]
 //!
 //! # Design
 //!
@@ -15,6 +13,16 @@
 //!
 //! This allows validators to prune old nullifiers, dramatically reducing
 //! state size compared to Zcash's permanent nullifier set.
+//!
+//! # Accumulator Chaining
+//!
+//! The nullifier set uses the same hash chaining formula as tachygrams:
+//! `acc_new = H(DS_NULL_ACC, acc_old, nullifier, counter)`
+//!
+//! This ensures consistency with the tachygram chain specification while
+//! using a distinct domain separator (DS_NULL_ACC) for nullifier context.
+
+#![allow(missing_docs)]
 
 #![forbid(unsafe_code)]
 
@@ -53,8 +61,11 @@ pub struct NullifierSet {
     /// Fast lookup set (all active nullifiers)
     active_nullifiers: HashSet<Nullifier>,
     
-    /// Accumulator value (hash of all active nullifiers)
+    /// Accumulator value (hash chain of all tachygrams)
     accumulator: PallasFp,
+    
+    /// Global counter for tachygram position in chain
+    tachygram_count: u64,
     
     /// Oldest block we're still tracking
     oldest_block: u64,
@@ -68,6 +79,7 @@ impl NullifierSet {
             nullifiers_by_block: BTreeMap::new(),
             active_nullifiers: HashSet::new(),
             accumulator: PallasFp::ZERO,
+            tachygram_count: 0,
             oldest_block: block_height,
         }
     }
@@ -213,16 +225,21 @@ impl NullifierSet {
     // ----------------------------- Private Helpers -----------------------------
 
     /// Update the accumulator when adding/removing a nullifier
+    /// Uses the same chaining formula as tachygrams: H(DS_CHAIN, acc_old, tachygram, counter)
     fn update_accumulator(&mut self, nullifier: &Nullifier, adding: bool) {
         let nf_fp = bytes_to_fp_le(&nullifier.0);
         
         if adding {
-            // Add: acc_new = H(acc_old, nf)
+            // Add: acc_new = H(DS_CHAIN, acc_old, tachygram, counter)
+            // Use DS_NULL_ACC domain separator to distinguish nullifier context
+            let count_fp = PallasFp::from(self.tachygram_count);
             self.accumulator = poseidon_hash(&[
                 fp_u64(DS_NULL_ACC),
                 self.accumulator,
                 nf_fp,
+                count_fp,  // Include counter for consistency with tachygram chain
             ]);
+            self.tachygram_count += 1;
         } else {
             // Remove: recompute from scratch (rare operation)
             self.recompute_accumulator();
@@ -230,6 +247,9 @@ impl NullifierSet {
     }
 
     /// Recompute accumulator from all active nullifiers
+    /// Note: This is a rare operation (only when pruning). In the recomputation,
+    /// we cannot preserve original counter values, so we recompute with sequential counters.
+    /// This is acceptable for a pruned/temporary nullifier set used only for double-spend checks.
     fn recompute_accumulator(&mut self) {
         let mut acc = PallasFp::ZERO;
         
@@ -237,12 +257,20 @@ impl NullifierSet {
         let mut sorted: Vec<_> = self.active_nullifiers.iter().collect();
         sorted.sort_by_key(|nf| nf.0);
         
-        for nf in sorted {
+        // Recompute with sequential counters
+        for (i, nf) in sorted.iter().enumerate() {
             let nf_fp = bytes_to_fp_le(&nf.0);
-            acc = poseidon_hash(&[fp_u64(DS_NULL_ACC), acc, nf_fp]);
+            let count_fp = PallasFp::from(i as u64);
+            acc = poseidon_hash(&[
+                fp_u64(DS_NULL_ACC),
+                acc,
+                nf_fp,
+                count_fp,
+            ]);
         }
         
         self.accumulator = acc;
+        self.tachygram_count = sorted.len() as u64;
     }
 
     /// Compute membership witness (nullifier is in set)

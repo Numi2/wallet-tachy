@@ -65,41 +65,31 @@ mod full_flow_tests {
         
         // ========== Step 3: Create Spend Context ==========
         
-        // Build a dummy Merkle tree and get witness
-        let tree_leaves = vec![Tachygram(sender_cm.0)];
-        let tree = crate::tachystamps::build_tree(&tree_leaves, 4); // Height 4
-        let merkle_path = crate::tachystamps::open_path(&tree, 0);
-        
+        // Hash chain approach - no merkle tree needed
         let spend_ctx = SpendContext {
             note: sender_note.clone(),
             nk: sender_nk,
             flavor: flavor_in,
-            merkle_path,
-            note_index: 0,
+            created_at_block: 100,
         };
         
         // ========== Step 4: Build Transaction ==========
         
-        let tree_root = {
-            use halo2curves::pasta::Fp as PallasFp;
-            use halo2curves::ff::PrimeField;
-            tree.root().to_repr()
-        };
+        // Initial chain accumulator (genesis)
+        let chain_accumulator = [0u8; 32];
         
         let anchor_range = AnchorRange { start: 0, end: 100 };
         
-        let mut tx_builder = TachyonTxBuilder::new(tree_root, anchor_range);
+        let mut tx_builder = TachyonTxBuilder::new(chain_accumulator, anchor_range);
         tx_builder.add_spend(spend_ctx);
         
         let output_ctx_recipient = OutputContext {
             note: recipient_note,
-            tree_root,
-            note_index: 1,
+            created_at_block: 200,
         };
         let output_ctx_change = OutputContext {
             note: change_note,
-            tree_root,
-            note_index: 2,
+            created_at_block: 200,
         };
         
         tx_builder.add_output(output_ctx_recipient);
@@ -333,12 +323,8 @@ mod full_flow_tests {
         // Add a note to track
         let nullifier = crate::oblivious_sync::Nullifier([42u8; 32]);
         let commitment = Tachygram([43u8; 32]);
-        let witness = crate::tachystamps::MerklePath {
-            siblings: vec![PallasFp::from(0u64); 4],
-            directions: vec![false; 4],
-        };
         
-        wallet.add_note(nullifier, commitment, witness, 5);
+        wallet.add_note(nullifier, commitment, 5);
         
         assert_eq!(wallet.notes.len(), 1);
         assert_eq!(wallet.current_block, 0);

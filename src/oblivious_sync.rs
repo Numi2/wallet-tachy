@@ -7,14 +7,14 @@
 //! # Core Concepts
 //!
 //! ## Wallet State as Proof-Carrying Data (PCD)
-//! Rather than just tracking note witnesses, the wallet maintains a proof of its own
-//! correctness that evolves as blocks are processed. When spending, this proof becomes
-//! part of the transaction, reducing validator burden.
+//! Rather than just tracking note positions in the hash chain, the wallet maintains a 
+//! proof of its own correctness that evolves as blocks are processed. When spending, 
+//! this proof becomes part of the transaction, reducing validator burden.
 //!
 //! ## Oblivious Syncing Service
 //! A third party that can:
 //! - Process blocks to check if nullifiers have been spent
-//! - Update Merkle witness proofs for note commitments
+//! - Update hash chain accumulator for note commitments
 //! - Generate PCD proofs of wallet state validity
 //! - Do all this WITHOUT learning:
 //!   * Which notes the wallet owns
@@ -29,7 +29,7 @@
 //! ## Privacy Guarantee
 //! By deriving nullifiers independently of note commitments (as per Tachyon's modified
 //! nullifier derivation), the service cannot correlate a nullifier with a specific note
-//! position in the Merkle tree, preserving strong privacy.
+//! position in the hash chain, preserving strong privacy.
 //!
 //! # Architecture
 //!
@@ -40,7 +40,7 @@
 //!   |                              |<----fetch blocks N..M--------|
 //!   |                              |                              |
 //!   |                              |--check nullifiers not spent--|
-//!   |                              |--update Merkle witnesses-----|
+//!   |                              |--update hash chain-----------|
 //!   |                              |--generate PCD proof---------|
 //!   |                              |                              |
 //!   |<---SyncResponse(PCD proof)---|                              |
@@ -57,9 +57,10 @@ use thiserror::Error;
 
 // Re-use types from tachystamps module
 use crate::tachystamps::{
-    AnchorRange, Compressed, MerklePath, MerkleTree, Prover, RecParams, Tachygram,
-    TachyStepCircuit, TachyError,
+    AnchorRange, Compressed, Prover, RecParams, Tachygram, TachyError,
 };
+
+// Hash chain accumulator - no need for MerklePath
 
 // Pasta curve scalar field
 use halo2curves::pasta::Fp as PallasFp;
@@ -81,10 +82,7 @@ pub struct NoteState {
     /// The note commitment (private, NOT shared with service)
     pub commitment: Tachygram,
     
-    /// Current Merkle witness for this note
-    pub witness: MerklePath,
-    
-    /// Block height at which this note was created
+    /// Block height at which this note was created (for hash chain position)
     pub created_at_block: u64,
     
     /// Last block height at which we verified it wasn't spent
@@ -101,7 +99,7 @@ pub struct WalletState {
     /// Current block height
     pub current_block: u64,
     
-    /// Current Merkle tree root (anchor)
+    /// Current hash chain accumulator (anchor)
     pub anchor: [u8; 32],
     
     /// Notes being tracked by this wallet
@@ -175,8 +173,8 @@ pub struct SyncServiceConfig {
     /// Maximum number of nullifiers to track per request
     pub max_nullifiers_per_request: usize,
     
-    /// Merkle tree height
-    pub tree_height: usize,
+    /// Hash chain batch size
+    pub chain_batch_size: usize,
     
     /// Batch size for proof generation
     pub proof_batch_size: usize,
@@ -187,7 +185,7 @@ impl Default for SyncServiceConfig {
         Self {
             max_blocks_per_request: 1000,
             max_nullifiers_per_request: 100,
-            tree_height: 32, // Orchard tree height
+            chain_batch_size: 32, // Number of tachygrams to accumulate per batch
             proof_batch_size: 16,
         }
     }
@@ -250,7 +248,7 @@ pub trait BlockchainProvider {
     /// Get the current block height
     fn current_block_height(&self) -> Result<u64, SyncError>;
     
-    /// Get the Merkle root (anchor) at a specific block
+    /// Get the hash chain accumulator (anchor) at a specific block
     fn get_anchor_at_block(&self, block_height: u64) -> Result<[u8; 32], SyncError>;
 }
 
@@ -273,13 +271,11 @@ impl WalletState {
         &mut self,
         nullifier: Nullifier,
         commitment: Tachygram,
-        witness: MerklePath,
         created_at_block: u64,
     ) {
         self.notes.push(NoteState {
             nullifier,
             commitment,
-            witness,
             created_at_block,
             last_checked_block: created_at_block,
             spent: false,
@@ -414,8 +410,8 @@ pub struct ObliviousSyncService<B: BlockchainProvider> {
     blockchain: B,
     config: SyncServiceConfig,
     prover: Option<Prover>, // Cached prover setup
-    /// Incremental Merkle tree for efficient updates
-    merkle_tree: Option<crate::incremental_merkle::IncrementalMerkleTree>,
+    /// Note: Hash chain accumulator replaces Merkle tree in new design
+    _reserved: Option<()>,
 }
 
 impl<B: BlockchainProvider> ObliviousSyncService<B> {
@@ -425,15 +421,14 @@ impl<B: BlockchainProvider> ObliviousSyncService<B> {
             blockchain,
             config,
             prover: None,
-            merkle_tree: None,
+            _reserved: None,
         }
     }
     
-    /// Initialize the incremental Merkle tree
-    pub fn init_merkle_tree(&mut self) {
-        self.merkle_tree = Some(crate::incremental_merkle::IncrementalMerkleTree::new(
-            self.config.tree_height
-        ));
+    /// Initialize the hash chain accumulator (no-op, managed by prover)
+    pub fn init_hash_chain(&mut self) {
+        // Hash chain accumulator is managed by the tachystamps prover
+        self._reserved = None;
     }
     
     /// Process a sync request and return a response.
@@ -446,7 +441,7 @@ impl<B: BlockchainProvider> ObliviousSyncService<B> {
         // Process blocks in the requested range
         let mut spent_nullifiers = Vec::new();
         let mut new_tachygrams = Vec::new();
-        let mut processed_blocks = Vec::new();
+        let mut processed_blocks = Vec::<u64>::new();
         
         for block_height in blinded.from_block..=blinded.to_block {
             // Check if any tracked nullifiers were spent in this block
@@ -477,7 +472,7 @@ impl<B: BlockchainProvider> ObliviousSyncService<B> {
         // Generate PCD proof
         // This proves that:
         // 1. All tracked nullifiers were checked for spends
-        // 2. Merkle witnesses are updated to the new anchor
+        // 2. Hash chain accumulator is updated to the new anchor
         // 3. The wallet state transition is valid
         let pcd_proof = self.generate_pcd_proof(
             blinded,
@@ -526,11 +521,12 @@ impl<B: BlockchainProvider> ObliviousSyncService<B> {
     /// This proof demonstrates:
     /// - All nullifiers in the set were checked for spends
     /// - None of the unspent nullifiers appeared in blocks from_block..to_block
-    /// - Merkle witnesses were properly updated
+    /// - Hash chain accumulator was properly updated
     /// - The state transition from old anchor to new anchor is valid
     fn generate_pcd_proof(
         &mut self,
         blinded: &BlindedWalletState,
+        #[allow(unused_variables)]
         processed_blocks: &[u64],
         new_tachygrams: &[(u64, Tachygram)],
         new_anchor: [u8; 32],
@@ -538,31 +534,18 @@ impl<B: BlockchainProvider> ObliviousSyncService<B> {
         // Initialize prover if needed
         if self.prover.is_none() {
             let params = RecParams {
-                tree_height: self.config.tree_height,
-                batch_leaves: self.config.proof_batch_size,
+                max_tachygrams_per_step: self.config.proof_batch_size,
             };
             self.prover = Some(Prover::setup(&params)?);
         }
         
-        // Use incremental Merkle tree for efficient updates
-        // Initialize tree if needed
-        if self.merkle_tree.is_none() {
-            self.init_merkle_tree();
-        }
+        // Hash chain accumulator handles tachygram tracking (no tree needed)
+        // The new design accumulates tachygrams via hash chains instead of trees
         
-        {
-            let tree = self.merkle_tree.as_mut().unwrap();
-            
-            // Incrementally insert new tachygrams (O(log n) each)
-            for (_, tachygram) in new_tachygrams {
-                tree.insert(tachygram)
-                    .map_err(|e| SyncError::Tachystamps(TachyError::Halo2(format!("{:?}", e))))?;
-            }
-        }
-        
-        // Get tree reference for witness generation
-        let tree_ref = self.merkle_tree.as_ref().unwrap();
-        let root_fp = tree_ref.root();
+        // Convert anchor to field element for hash chain
+        // Hash chain doesn't need root field element
+        #[allow(unused_variables)]
+        let _root_placeholder = new_anchor;
         
         let prover = self.prover.as_mut().unwrap();
         
@@ -575,43 +558,35 @@ impl<B: BlockchainProvider> ObliviousSyncService<B> {
             start: blinded.from_block,
             end: blinded.to_block,
         };
-        prover.init(root_fp, anchor_range)?;
+        // Use block height instead of field element for init
+        prover.init(anchor_range.start, anchor_range)?;
         
-        // Generate proof steps
+        // Generate proof steps using hash chain accumulator
         // Each step proves a batch of tachygram membership/non-membership
         let batch_size = self.config.proof_batch_size;
         
-        let num_leaves = tree_ref.num_leaves;
+        let num_tachygrams = new_tachygrams.len();
         
-        for chunk_start in (0..num_leaves).step_by(batch_size) {
-            let chunk_end = (chunk_start + batch_size).min(num_leaves);
+        for chunk_start in (0..num_tachygrams).step_by(batch_size) {
+            let chunk_end = (chunk_start + batch_size).min(num_tachygrams);
             
-            // Pad to batch size if needed
-            let mut leaves = vec![[0u8; 32]; batch_size];
-            let mut paths = Vec::with_capacity(batch_size);
+            // Collect tachygrams for this batch
+            let mut tachygrams_batch = Vec::with_capacity(batch_size);
             
             for i in chunk_start..chunk_end {
-                // Use incremental tree for witness generation (efficient!)
-                let witness = tree_ref.witness(i)
-                    .map_err(|e| SyncError::Tachystamps(
-                        TachyError::Halo2(format!("witness error: {:?}", e))
-                    ))?;
-                let tg = new_tachygrams.get(i - chunk_start)
-                    .map(|(_, tg)| tg.0)
-                    .unwrap_or([0u8; 32]);
-                leaves[i - chunk_start] = tg;
-                paths.push(witness);
+                let tg = new_tachygrams.get(i)
+                    .map(|(_, tg)| *tg)
+                    .unwrap_or(Tachygram([0u8; 32]));
+                tachygrams_batch.push(tg);
             }
             
-            // Pad remaining with dummy proofs
-            for _i in (chunk_end - chunk_start)..batch_size {
-                paths.push(tree_ref.witness(0).unwrap_or_else(|_| MerklePath {
-                    siblings: vec![PallasFp::from(0u64); self.config.tree_height],
-                    directions: vec![false; self.config.tree_height],
-                }));
+            // Pad remaining with dummy tachygrams if needed
+            while tachygrams_batch.len() < batch_size {
+                tachygrams_batch.push(Tachygram([0u8; 32]));
             }
             
-            prover.prove_step(root_fp, anchor_range, leaves, paths)?;
+            // Prove this batch of tachygrams in the hash chain
+            prover.prove_step(anchor_range, tachygrams_batch)?;
         }
         
         // Finalize and compress the proof
@@ -759,12 +734,8 @@ mod tests {
         let mut wallet = WalletState::new();
         let nullifier = Nullifier([1u8; 32]);
         let commitment = Tachygram([2u8; 32]);
-        let witness = MerklePath {
-            siblings: vec![PallasFp::from(0u64); 32],
-            directions: vec![false; 32],
-        };
         
-        wallet.add_note(nullifier, commitment, witness, 100);
+        wallet.add_note(nullifier, commitment, 100);
         assert_eq!(wallet.notes.len(), 1);
         assert_eq!(wallet.notes[0].nullifier, nullifier);
     }
@@ -775,7 +746,6 @@ mod tests {
         wallet.add_note(
             Nullifier([1u8; 32]),
             Tachygram([2u8; 32]),
-            MerklePath { siblings: vec![], directions: vec![] },
             100,
         );
         

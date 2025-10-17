@@ -71,6 +71,7 @@ const DS_NOTE_COMMIT: u64 = 0x6e6f7465; // "note"
 const DS_NULLIFIER_PRF: u64 = 0x6e756c6c; // "null"
 
 /// Domain tag for note encryption key derivation
+#[allow(dead_code)]
 const DS_NOTE_ENC_KEY: u64 = 0x656e6372; // "encr"
 
 // ----------------------------- Field Conversion Helpers -----------------------------
@@ -79,6 +80,7 @@ fn fp_u64(x: u64) -> PallasFp {
     PallasFp::from(x)
 }
 
+#[allow(dead_code)]
 fn bytes_to_fp_le(bytes: &[u8]) -> PallasFp {
     let mut b = [0u8; 32];
     let len = core::cmp::min(32, bytes.len());

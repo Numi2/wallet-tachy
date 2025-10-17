@@ -17,14 +17,13 @@
 //!
 //! 1. Retrieve note information from out-of-band channel
 //! 2. Compute nullifier using nullifier key and flavor
-//! 3. Create Merkle membership proof for note commitment
-//! 4. Include nullifier in tachystamp proof
-//! 5. Verify nullifier hasn't been seen in recent blocks
+//! 3. Include nullifier in tachystamp hash chain proof
+//! 4. Verify nullifier hasn't been seen in recent blocks
 //!
 //! # Integration with Tachystamps
 //!
 //! Tachystamps prove:
-//! - Note commitments exist in the Merkle tree (membership)
+//! - Note commitments exist in the hash chain (membership)
 //! - Nullifiers have not been revealed (non-membership in recent blocks)
 //! - Balance integrity (via binding signatures)
 //!
@@ -43,7 +42,7 @@ use thiserror::Error;
 /// Context for spending a note.
 ///
 /// Contains all the information needed to construct a spend operation,
-/// including the note, keys, and Merkle path.
+/// including the note and keys. Hash chain witness is managed by tachystamps.
 #[derive(Clone, Debug)]
 pub struct SpendContext {
     /// The note being spent
@@ -55,11 +54,8 @@ pub struct SpendContext {
     /// Nullifier flavor for oblivious sync privacy
     pub flavor: NullifierFlavor,
 
-    /// Merkle path proving note commitment exists in tree
-    pub merkle_path: MerklePath,
-
-    /// Index of the note in the tree
-    pub note_index: usize,
+    /// Block height where this note was created (for hash chain position)
+    pub created_at_block: u64,
 }
 
 impl SpendContext {
@@ -91,11 +87,8 @@ pub struct OutputContext {
     /// The note being created
     pub note: TachyonNote,
 
-    /// Merkle tree root where this note will be added
-    pub tree_root: [u8; 32],
-
-    /// Position where this note will be added (for tracking)
-    pub note_index: usize,
+    /// Block height where this note will be added (for tracking)
+    pub created_at_block: u64,
 }
 
 impl OutputContext {
@@ -124,8 +117,8 @@ pub struct TachyonTxBuilder {
     /// Notes being created (outputs)
     pub outputs: Vec<OutputContext>,
 
-    /// Current Merkle tree state
-    pub tree_root: [u8; 32],
+    /// Current hash chain accumulator state
+    pub chain_accumulator: [u8; 32],
 
     /// Anchor range for tachystamp proof
     pub anchor_range: AnchorRange,
@@ -133,11 +126,11 @@ pub struct TachyonTxBuilder {
 
 impl TachyonTxBuilder {
     /// Create a new transaction builder.
-    pub fn new(tree_root: [u8; 32], anchor_range: AnchorRange) -> Self {
+    pub fn new(chain_accumulator: [u8; 32], anchor_range: AnchorRange) -> Self {
         Self {
             spends: Vec::new(),
             outputs: Vec::new(),
-            tree_root,
+            chain_accumulator,
             anchor_range,
         }
     }
@@ -190,29 +183,26 @@ impl TachyonTxBuilder {
     /// Build tachystamp proof for this transaction.
     ///
     /// This proves:
-    /// - All spend note commitments exist in the Merkle tree
+    /// - All spend note commitments exist in the hash chain
     /// - All nullifiers are valid and haven't been spent
     /// - Balance is preserved
     pub fn build_tachystamp(&self, prover: &mut Prover) -> Result<Compressed, TxBuilderError> {
         // Check balance first
         self.check_balance()?;
 
-        // Collect all Merkle paths and leaves
-        let mut leaves = Vec::new();
-        let mut paths = Vec::new();
+        // Collect all tachygrams for the spend
+        let mut tachygrams = Vec::new();
 
-        // Add spend proofs (membership of note commitments)
+        // Add spend proofs (note commitments as tachygrams)
         for spend in &self.spends {
             let cm_bytes = spend.commitment().0;
-            leaves.push(cm_bytes);
-            paths.push(spend.merkle_path.clone());
+            tachygrams.push(Tachygram(cm_bytes));
         }
 
-        // Prove membership in batches
-        if !leaves.is_empty() {
-            let root_fp = bytes_to_fp_le(&self.tree_root);
+        // Prove with hash chain (new tachystamps approach)
+        if !tachygrams.is_empty() {
             prover
-                .prove_step(root_fp, self.anchor_range, leaves, paths)
+                .prove_step(self.anchor_range, tachygrams)
                 .map_err(|e| TxBuilderError::ProofGeneration(e.to_string()))?;
         }
 
@@ -233,7 +223,7 @@ pub fn create_simple_payment(
     recipient_pk: PaymentKey,
     shared_secret: &[u8],
     value: u64,
-    tree_root: [u8; 32],
+    chain_accumulator: [u8; 32],
     anchor_range: AnchorRange,
 ) -> Result<TachyonTxBuilder, TxBuilderError> {
     // Derive output note secrets from shared secret
@@ -243,12 +233,11 @@ pub fn create_simple_payment(
     let output_note = TachyonNote::new(recipient_pk, value, psi, rcm);
     let output_ctx = OutputContext {
         note: output_note,
-        tree_root,
-        note_index: 0, // Will be assigned by tree
+        created_at_block: 0, // Will be set by builder
     };
 
     // Build transaction
-    let mut builder = TachyonTxBuilder::new(tree_root, anchor_range);
+    let mut builder = TachyonTxBuilder::new(chain_accumulator, anchor_range);
     builder.add_spend(spend);
     builder.add_output(output_ctx);
 
@@ -262,7 +251,7 @@ pub fn create_shielding_tx(
     recipient_pk: PaymentKey,
     shared_secret: &[u8],
     value: u64,
-    tree_root: [u8; 32],
+    chain_accumulator: [u8; 32],
     anchor_range: AnchorRange,
 ) -> Result<TachyonTxBuilder, TxBuilderError> {
     // Derive output note secrets
@@ -272,12 +261,11 @@ pub fn create_shielding_tx(
     let output_note = TachyonNote::new(recipient_pk, value, psi, rcm);
     let output_ctx = OutputContext {
         note: output_note,
-        tree_root,
-        note_index: 0,
+        created_at_block: 0, // Will be set by builder
     };
 
     // Build transaction (no spends, only output)
-    let mut builder = TachyonTxBuilder::new(tree_root, anchor_range);
+    let mut builder = TachyonTxBuilder::new(chain_accumulator, anchor_range);
     builder.add_output(output_ctx);
 
     Ok(builder)
@@ -288,11 +276,11 @@ pub fn create_shielding_tx(
 /// In Tachyon, this converts a shielded note back to transparent funds.
 pub fn create_deshielding_tx(
     spend: SpendContext,
-    tree_root: [u8; 32],
+    chain_accumulator: [u8; 32],
     anchor_range: AnchorRange,
 ) -> Result<TachyonTxBuilder, TxBuilderError> {
     // Build transaction (spend only, no shielded outputs)
-    let mut builder = TachyonTxBuilder::new(tree_root, anchor_range);
+    let mut builder = TachyonTxBuilder::new(chain_accumulator, anchor_range);
     builder.add_spend(spend);
 
     Ok(builder)
@@ -300,6 +288,7 @@ pub fn create_deshielding_tx(
 
 // ----------------------------- Field Conversion (re-export from notes) -----------------------------
 
+#[allow(dead_code)]
 fn bytes_to_fp_le(bytes: &[u8]) -> halo2curves::pasta::Fp {
     use halo2curves::ff::PrimeField;
     let mut b = [0u8; 32];
@@ -318,8 +307,8 @@ pub enum TxBuilderError {
     #[error("proof generation failed: {0}")]
     ProofGeneration(String),
 
-    #[error("invalid merkle path")]
-    InvalidMerklePath,
+    #[error("invalid hash chain witness")]
+    InvalidHashChainWitness,
 
     #[error("missing nullifier key")]
     MissingNullifierKey,
@@ -339,14 +328,6 @@ mod tests {
     use rand::rngs::OsRng;
     use group::ff::Field;
 
-    fn dummy_merkle_path(height: usize) -> MerklePath {
-        use halo2curves::pasta::Fp as PallasFp;
-        MerklePath {
-            siblings: vec![PallasFp::ZERO; height],
-            directions: vec![false; height],
-        }
-    }
-
     #[test]
     fn test_spend_context() {
         let pk = PaymentKey::random(OsRng);
@@ -361,8 +342,7 @@ mod tests {
             note: note.clone(),
             nk,
             flavor,
-            merkle_path: dummy_merkle_path(4),
-            note_index: 0,
+            created_at_block: 100,
         };
 
         let nf1 = spend.nullifier();
@@ -382,8 +362,7 @@ mod tests {
         let note = TachyonNote::new(pk, 2000, psi, rcm);
         let output = OutputContext {
             note: note.clone(),
-            tree_root: [0u8; 32],
-            note_index: 5,
+            created_at_block: 200,
         };
 
         // Check commitment
@@ -411,14 +390,12 @@ mod tests {
             note: input_note,
             nk,
             flavor,
-            merkle_path: dummy_merkle_path(4),
-            note_index: 0,
+            created_at_block: 100,
         };
 
         let output = OutputContext {
             note: output_note,
-            tree_root: [0u8; 32],
-            note_index: 1,
+            created_at_block: 200,
         };
 
         let mut builder = TachyonTxBuilder::new([0u8; 32], AnchorRange { start: 0, end: 100 });
@@ -449,14 +426,12 @@ mod tests {
             note: input_note,
             nk,
             flavor,
-            merkle_path: dummy_merkle_path(4),
-            note_index: 0,
+            created_at_block: 100,
         };
 
         let output = OutputContext {
             note: output_note,
-            tree_root: [0u8; 32],
-            note_index: 1,
+            created_at_block: 200,
         };
 
         let mut builder = TachyonTxBuilder::new([0u8; 32], AnchorRange { start: 0, end: 100 });
@@ -480,8 +455,7 @@ mod tests {
             note: input_note,
             nk,
             flavor,
-            merkle_path: dummy_merkle_path(4),
-            note_index: 0,
+            created_at_block: 100,
         };
 
         let builder = create_simple_payment(
@@ -530,8 +504,7 @@ mod tests {
             note,
             nk,
             flavor,
-            merkle_path: dummy_merkle_path(4),
-            note_index: 0,
+            created_at_block: 100,
         };
 
         let builder = create_deshielding_tx(spend, [0u8; 32], AnchorRange { start: 0, end: 100 }).unwrap();

@@ -1,4 +1,4 @@
-use bech32::{self, ToBase32, Variant, FromBase32};
+use bech32::{self, ToBase32, Variant};
 use blake2b_simd::Params as Blake2bParams;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;

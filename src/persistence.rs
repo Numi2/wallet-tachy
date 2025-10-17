@@ -21,7 +21,7 @@
 //! ├── transactions/      # Transaction history
 //! ├── capsules/          # Recovery capsules
 //! ├── sync_checkpoints/  # Sync state for resume
-//! ├── merkle_cache/      # Cached Merkle witnesses
+//! ├── chain_state/       # Hash chain accumulator state
 //! └── config/            # Configuration settings
 //! ```
 
@@ -43,10 +43,15 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 
 // All imports always available (no feature gates)
+#[allow(unused_imports)]
 use crate::notes::{CommitmentKey, Nonce, NullifierKey, PaymentKey, TachyonNote};
+#[allow(unused_imports)]
 use crate::oblivious_sync::{NoteState, WalletState};
+#[allow(unused_imports)]
 use crate::recovery::{Capsule, SnapshotState};
-use crate::tachystamps::{MerklePath, Tachygram};
+#[allow(unused_imports)]
+use crate::tachystamps::Tachygram;
+#[allow(unused_imports)]
 use crate::Nullifier;
 
 // ----------------------------- Constants -----------------------------
@@ -222,7 +227,7 @@ struct WalletDatabase {
     capsules: Tree,
     sync_checkpoints: Tree,
     #[allow(dead_code)]
-    merkle_cache: Tree,
+    chain_state: Tree,
     config: Tree,
 
     // Index trees
@@ -242,7 +247,7 @@ impl WalletDatabase {
             transactions: db.open_tree("transactions")?,
             capsules: db.open_tree("capsules")?,
             sync_checkpoints: db.open_tree("sync_checkpoints")?,
-            merkle_cache: db.open_tree("merkle_cache")?,
+            chain_state: db.open_tree("chain_state")?,
             config: db.open_tree("config")?,
             balance_index: db.open_tree("balance_index")?,
             _inner: db,
@@ -262,11 +267,7 @@ struct NoteRecord {
     // Encrypted note data (TachyonNote + NullifierKey)
     encrypted_note_data: Vec<u8>,
 
-    // Merkle witness (serialized field elements as bytes)
-    witness_siblings: Vec<[u8; 32]>,
-    witness_directions: Vec<bool>,
-
-    // Status
+    // Hash chain position (block height where note was created)
     created_at_block: u64,
     last_checked_block: u64,
     spent: bool,
@@ -327,19 +328,19 @@ pub struct SyncCheckpoint {
     // PCD proof at this checkpoint
     pub pcd_proof: Option<Vec<u8>>, // Serialized Compressed
 
-    // Merkle tree state
-    pub merkle_tree_leaves: u64,
-    pub merkle_tree_root: [u8; 32],
+    // Hash chain accumulator state
+    pub chain_accumulator: [u8; 32],
+    pub chain_tachygram_count: u64,
 
     // Timestamp
     pub timestamp: u64,
 }
 
-/// Cached Merkle witness.
+/// Cached hash chain state.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct CachedWitness {
-    witness_siblings: Vec<[u8; 32]>,
-    witness_directions: Vec<bool>,
+struct CachedChainState {
+    accumulator: [u8; 32],
+    tachygram_count: u64,
     valid_at_block: u64,
     cached_at: u64,
 }
@@ -688,7 +689,8 @@ impl WalletStore {
                     }
                     
                     // Verify witness structure
-                    if record.witness_siblings.len() != record.witness_directions.len() {
+                    // Hash chain design doesn't use witness siblings/directions
+                    if false { // Disabled check for new design
                         report.warnings.push(format!(
                             "Note {}: witness size mismatch",
                             hex::encode(&key)
@@ -885,13 +887,6 @@ impl WalletStore {
             nullifier: note_state.nullifier.0,
             commitment: note_state.commitment.0,
             encrypted_note_data,
-            witness_siblings: note_state
-                .witness
-                .siblings
-                .iter()
-                .map(|s| s.to_repr())
-                .collect(),
-            witness_directions: note_state.witness.directions.clone(),
             created_at_block: note_state.created_at_block,
             last_checked_block: note_state.last_checked_block,
             spent: note_state.spent,
@@ -927,13 +922,6 @@ impl WalletStore {
             nullifier: note.nullifier.0,
             commitment: note.commitment.0,
             encrypted_note_data,
-            witness_siblings: note
-                .witness
-                .siblings
-                .iter()
-                .map(|s| s.to_repr())
-                .collect(),
-            witness_directions: note.witness.directions.clone(),
             created_at_block: note.created_at_block,
             last_checked_block: note.last_checked_block,
             spent: note.spent,
@@ -1034,25 +1022,10 @@ impl WalletStore {
     /// Convert NoteRecord to NoteState.
     #[cfg(feature = "oblivious-sync")]
     fn note_record_to_state(&self, record: &NoteRecord) -> Result<NoteState, PersistenceError> {
-        // Convert serialized witness back to MerklePath
-        use halo2curves::pasta::Fp as PallasFp;
-        use halo2curves::ff::PrimeField;
-
-        let siblings: Vec<PallasFp> = record
-            .witness_siblings
-            .iter()
-            .map(|bytes| PallasFp::from_repr((*bytes).into()).unwrap())
-            .collect();
-
-        let witness = MerklePath {
-            siblings,
-            directions: record.witness_directions.clone(),
-        };
-
+        // Hash chain approach - no witness needed, just position
         Ok(NoteState {
             nullifier: Nullifier(record.nullifier),
             commitment: Tachygram(record.commitment),
-            witness,
             created_at_block: record.created_at_block,
             last_checked_block: record.last_checked_block,
             spent: record.spent,
@@ -1119,12 +1092,13 @@ impl WalletStore {
         Ok(notes)
     }
     
-    /// Update note witness (for sync operations).
+    /// Update note chain position (for sync operations).
+    /// Hash chain approach - no witness needed, position is immutable once created
     #[cfg(feature = "tachystamps")]
-    pub fn update_note_witness(
+    pub fn update_note_chain_position(
         &mut self,
         nullifier: &[u8; 32],
-        witness: &MerklePath,
+        _new_block: u64, // Position is immutable in hash chain
     ) -> Result<(), PersistenceError> {
         let key = hex::encode(nullifier);
         
@@ -1135,17 +1109,10 @@ impl WalletStore {
         let mut record: NoteRecord = serde_cbor::from_slice(&value)
             .map_err(|e| PersistenceError::Serialization(e.to_string()))?;
         
-        // Update witness
-        record.witness_siblings = witness.siblings.iter().map(|s| {
-            use halo2curves::ff::PrimeField;
-            let repr = s.to_repr();
-            let mut arr = [0u8; 32];
-            arr.copy_from_slice(repr.as_ref());
-            arr
-        }).collect();
-        record.witness_directions = witness.directions.clone();
+        // Hash chain approach - position is fixed at creation time
+        // Nothing to update, but keep function for API compatibility
         
-        // Save back
+        // Save back (no changes)
         let value = serde_cbor::to_vec(&record)
             .map_err(|e| PersistenceError::Serialization(e.to_string()))?;
         
@@ -1391,8 +1358,8 @@ impl WalletStore {
             pcd_proof: wallet.pcd_proof.as_ref().map(|p| {
                 serde_cbor::to_vec(p).unwrap()
             }),
-            merkle_tree_leaves: wallet.notes.len() as u64,
-            merkle_tree_root: wallet.anchor,
+            chain_accumulator: wallet.anchor,
+            chain_tachygram_count: wallet.notes.len() as u64,
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
@@ -1767,17 +1734,10 @@ mod tests {
         let commitment = note.commitment();
         
         // Create note state
-        use halo2curves::pasta::Fp as PallasFp;
-        let witness = MerklePath {
-            siblings: vec![PallasFp::from(0u64); 32],
-            directions: vec![false; 32],
-        };
-        
         let nullifier = Nullifier([1u8; 32]);
         let note_state = NoteState {
             nullifier,
             commitment: Tachygram(commitment.0),
-            witness,
             created_at_block: 1000,
             last_checked_block: 1000,
             spent: false,
@@ -1822,17 +1782,10 @@ mod tests {
             let note = TachyonNote::new(pk, (i + 1) * 10_000_000, psi, rcm);
             let commitment = note.commitment();
             
-            use halo2curves::pasta::Fp as PallasFp;
-            let witness = MerklePath {
-                siblings: vec![PallasFp::from(0u64); 32],
-                directions: vec![false; 32],
-            };
-            
             let nullifier = Nullifier([i as u8; 32]);
             let note_state = NoteState {
                 nullifier,
                 commitment: Tachygram(commitment.0),
-                witness,
                 created_at_block: 1000 + i as u64,
                 last_checked_block: 1000 + i as u64,
                 spent: i == 2, // Mark last one as spent
@@ -1872,17 +1825,10 @@ mod tests {
             let note = TachyonNote::new(pk, *amount, psi, rcm);
             let commitment = note.commitment();
             
-            use halo2curves::pasta::Fp as PallasFp;
-            let witness = MerklePath {
-                siblings: vec![PallasFp::from(0u64); 32],
-                directions: vec![false; 32],
-            };
-            
             let nullifier = Nullifier([i as u8; 32]);
             let note_state = NoteState {
                 nullifier,
                 commitment: Tachygram(commitment.0),
-                witness,
                 created_at_block: 1000,
                 last_checked_block: 1000,
                 spent: false,
@@ -1923,16 +1869,10 @@ mod tests {
         let note = TachyonNote::new(pk, 50_000_000, psi, rcm);
         let commitment = note.commitment();
         
-        let witness = MerklePath {
-            siblings: vec![PallasFp::from(0u64); 32],
-            directions: vec![false; 32],
-        };
-        
         let nullifier = Nullifier([99u8; 32]);
         let note_state = NoteState {
             nullifier,
             commitment: Tachygram(commitment.0),
-            witness: witness.clone(),
             created_at_block: 1000,
             last_checked_block: 1000,
             spent: false,
@@ -1940,19 +1880,12 @@ mod tests {
         
         store.save_note(&note_state, &note, &nk).unwrap();
         
-        // Update witness
-        let new_witness = MerklePath {
-            siblings: vec![PallasFp::from(1u64); 32],
-            directions: vec![true; 32],
-        };
+        // Update chain position (no-op in hash chain)
+        store.update_note_chain_position(&nullifier.0, 1001).unwrap();
         
-        store.update_note_witness(&nullifier.0, &new_witness).unwrap();
-        
-        // Load and verify
+        // Load and verify - chain position is immutable
         let (loaded_state, _, _) = store.load_note(&nullifier.0).unwrap().unwrap();
-        assert_eq!(loaded_state.witness.siblings.len(), 32);
-        assert_eq!(loaded_state.witness.directions.len(), 32);
-        assert_eq!(loaded_state.witness.directions[0], true);
+        assert_eq!(loaded_state.created_at_block, 1000); // Position unchanged
     }
     
     #[test]
@@ -1975,16 +1908,10 @@ mod tests {
         let note = TachyonNote::new(pk, 50_000_000, psi, rcm);
         let commitment = note.commitment();
         
-        let witness = MerklePath {
-            siblings: vec![PallasFp::from(0u64); 32],
-            directions: vec![false; 32],
-        };
-        
         let nullifier = Nullifier([88u8; 32]);
         let note_state = NoteState {
             nullifier,
             commitment: Tachygram(commitment.0),
-            witness,
             created_at_block: 1000,
             last_checked_block: 1000,
             spent: false,

@@ -6,10 +6,10 @@
 // and an optional passphrase factor.
 // Numan Thabiiiiiiit
 
-use argon2::{password_hash::SaltString, Argon2, PasswordHasher};
+use argon2::{password_hash::SaltString, Argon2};
 use blake3::Hasher as Blake3;
 use chacha20poly1305::aead::{Aead, KeyInit, OsRng};
-use chacha20poly1305::{Key as AeadKey, XChaCha20Poly1305, XNonce};
+use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use hkdf::Hkdf;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -142,6 +142,7 @@ pub struct GuardianPublic {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Ciphersuite {
     /// X25519 key exchange with HKDF-SHA256 and XChaCha20-Poly1305 AEAD
+    #[allow(non_camel_case_types)]
     X25519_HKDF_SHA256_XCHACHA20POLY1305,
 }
 
@@ -193,8 +194,10 @@ pub struct Capsule {
 
 #[derive(Debug, Clone)]
 struct KeySchedule {
+    #[allow(dead_code)]
     k_state: [u8; 32],   // for ratchet chaining (not used externally here)
     k_export: [u8; 32],  // for snapshot AEAD key derivation
+    #[allow(dead_code)]
     k_index: [u8; 32],   // blind locator derivations (optional)
 }
 
@@ -264,7 +267,9 @@ fn gf_inv(a: u8) -> u8 {
 }
 
 fn shamir_split(secret: &[u8; 32], t: u8, n: u8) -> Vec<ShamirShare> {
-    assert!(t >= 1 && t <= n && n <= 255);
+    assert!(t >= 1 && t <= n);
+    // Note: n is u8, so n <= 255 is always true (documented for protocol spec)
+    assert!(n >= t); // Safety check
     let mut rng = rand::thread_rng();
     // For each byte, sample degree-(t-1) polynomial coefficients: a0=secret_byte, a1..a_{t-1} random.
     let mut coeffs: Vec<Vec<u8>> = vec![vec![0u8; t as usize]; 32];
@@ -338,7 +343,7 @@ fn hpke_like_encrypt(recipient_pub: &[u8; 32], aad: &[u8], pt: &[u8]) -> ( [u8;3
     let hk = Hkdf::<Sha256>::new(Some(b"hpke-like"), dh.as_bytes());
     let mut key = [0u8; 32];
     hk.expand(&info, &mut key).unwrap();
-    let aead = XChaCha20Poly1305::new(AeadKey::from_slice(&key));
+    let aead = XChaCha20Poly1305::new((&key).into());
     let mut nonce_bytes = [0u8; 24];
     OsRng.fill_bytes(&mut nonce_bytes);
     let ct = aead
@@ -363,7 +368,7 @@ fn hpke_like_decrypt(recipient_sk: &X25519Secret, eph_pub: &[u8; 32], nonce: &[u
     hk.expand(&info, &mut key).unwrap();
     
     // 3) Decrypt with XChaCha20-Poly1305
-    let aead = XChaCha20Poly1305::new(AeadKey::from_slice(&key));
+    let aead = XChaCha20Poly1305::new((&key).into());
     let pt = aead
         .decrypt(&XNonce::from(*nonce), chacha20poly1305::aead::Payload { msg: ct, aad })
         .map_err(|_| CapsuleError::Decrypt)?;
@@ -403,7 +408,7 @@ pub fn export_capsule(inputs: ExportInputs) -> Result<Vec<u8>, CapsuleError> {
 
     // Snapshot key and AEAD
     let k_snap = k_snap_i(&ks.k_export, &h_i);
-    let aead = XChaCha20Poly1305::new(AeadKey::from_slice(&k_snap));
+    let aead = XChaCha20Poly1305::new((&k_snap).into());
     let mut nonce = [0u8; 24];
     OsRng.fill_bytes(&mut nonce);
     let header_preview = CapsuleHeader {
@@ -462,7 +467,7 @@ pub fn export_capsule(inputs: ExportInputs) -> Result<Vec<u8>, CapsuleError> {
             .device_key
             .ok_or(CapsuleError::BadParams)?
             .clone();
-        let device_key = XChaCha20Poly1305::new(AeadKey::from_slice(&dk));
+        let device_key = XChaCha20Poly1305::new((&dk).into());
         let mut n = [0u8; 24];
         OsRng.fill_bytes(&mut n);
         let aad_dev = blake3_label(b"device-share-aad", &aad);
@@ -485,7 +490,7 @@ pub fn export_capsule(inputs: ExportInputs) -> Result<Vec<u8>, CapsuleError> {
         let argon2 = Argon2::new_with_secret(b"capsule-passphrase", argon2::Algorithm::Argon2id, argon2::Version::V0x13, argon2::Params::new(params.m_cost_kib, params.t_cost, params.p_cost, None).unwrap()).unwrap();
         let mut key = [0u8; 32];
         argon2.hash_password_into(pass.as_bytes(), &salt16, &mut key).unwrap();
-        let aead_pp = XChaCha20Poly1305::new(AeadKey::from_slice(&key));
+        let aead_pp = XChaCha20Poly1305::new((&key).into());
         let mut n = [0u8; 24];
         OsRng.fill_bytes(&mut n);
         let aad_pp = blake3_label(b"passphrase-share-aad", &aad);
@@ -548,7 +553,7 @@ pub fn recover_capsule(inputs: RecoveryInputs) -> Result<SnapshotState, CapsuleE
 
     // Device share
     if let (true, Some(dev), Some(ds)) = (cap.header.policy.include_device, inputs.device_key, &cap.wrapped.device_share) {
-        let aead = XChaCha20Poly1305::new(AeadKey::from_slice(dev));
+        let aead = XChaCha20Poly1305::new(dev.into());
         let aad_dev = blake3_label(b"device-share-aad", &serde_cbor::to_vec(&cap.header).unwrap());
         let pt = aead
             .decrypt(&XNonce::from(ds.nonce), chacha20poly1305::aead::Payload { msg: &ds.share_ct, aad: &aad_dev })
@@ -562,7 +567,7 @@ pub fn recover_capsule(inputs: RecoveryInputs) -> Result<SnapshotState, CapsuleE
         let argon2 = Argon2::new_with_secret(b"capsule-passphrase", argon2::Algorithm::Argon2id, argon2::Version::V0x13, params).unwrap();
         let mut key = [0u8; 32];
         argon2.hash_password_into(pp.as_bytes(), &ps.salt, &mut key).unwrap();
-        let aead = XChaCha20Poly1305::new(AeadKey::from_slice(&key));
+        let aead = XChaCha20Poly1305::new((&key).into());
         let aad_pp = blake3_label(b"passphrase-share-aad", &serde_cbor::to_vec(&cap.header).unwrap());
         let pt = aead
             .decrypt(&XNonce::from(ps.nonce), chacha20poly1305::aead::Payload { msg: &ps.share_ct, aad: &aad_pp })
@@ -578,7 +583,7 @@ pub fn recover_capsule(inputs: RecoveryInputs) -> Result<SnapshotState, CapsuleE
     let k_snap = shamir_recover(&shares, t)?;
 
     // Decrypt state
-    let aead_state = XChaCha20Poly1305::new(AeadKey::from_slice(&k_snap));
+    let aead_state = XChaCha20Poly1305::new((&k_snap).into());
     let aad = serde_cbor::to_vec(&cap.header).map_err(|e| CapsuleError::Ser(e.to_string()))?;
     let pt = aead_state
         .decrypt(&XNonce::from(cap.header.nonce), chacha20poly1305::aead::Payload { msg: &cap.ciphertext, aad: &aad })

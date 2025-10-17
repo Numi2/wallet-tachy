@@ -43,9 +43,9 @@ pub mod tachystamps;
 // pub mod proof_aggregation;
 
 // Core tachystamp modules (always enabled)
-pub mod incremental_merkle;
 pub mod notes;
 pub mod spend;
+pub mod nullifier_set;
 
 // Oblivious synchronization (always enabled)
 pub mod oblivious_sync;
@@ -54,8 +54,14 @@ pub mod blockchain_provider;
 /// Recovery mechanisms for wallet state including threshold guardians
 pub mod recovery;
 
-// Out-of-band payments (needs full orchard integration - temporarily disabled)
-// pub mod oob;
+// Out-of-band payments
+pub mod oob_kem;
+
+// Transaction fees (ZIP-224)
+pub mod fees;
+
+// Multi-asset support (ZSA)
+pub mod multi_asset;
 
 // Persistence layer
 pub mod persistence;

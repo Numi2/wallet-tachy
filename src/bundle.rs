@@ -7,7 +7,7 @@
 //! - Tachyactions (authorization-only, proof-carrying)
 //! - Tachystamp proofs or references to proof aggregates
 //! - Anchor validity (if Traditional Actions present)
-//!
+//! I made this in because i didnt know about many things at the time
 //! # Proof Aggregation
 //!
 //! Multiple tachystamps can be merged into a single aggregate. Bundles can then

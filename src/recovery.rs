@@ -1,12 +1,10 @@
-// export.rs
-//wallet capsule as a solution for revovery
+// recovery.rs
 // Single-file reference implementation of a "Recovery Capsule" for Tachyon-style wallets.
 // It exports an encrypted, integrity-checked, threshold-recoverable snapshot of wallet state,
-// and supports recovery using any t(habit)-of-n(uman) combination of shares from guardians, a device factor,
+// and supports recovery using any t-of-n combination of shares from guardians, a device factor,
 // and an optional passphrase factor.
-// Numan Thabiiiiiiit
 
-use argon2::{password_hash::SaltString, Argon2};
+use argon2::Argon2;
 use blake3::Hasher as Blake3;
 use chacha20poly1305::aead::{Aead, KeyInit, OsRng};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
@@ -16,8 +14,10 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
+use subtle::ConstantTimeEq;
 use thiserror::Error;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519Secret};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 // ----------------------------- Errors -----------------------------
 
@@ -27,14 +27,22 @@ pub enum CapsuleError {
     Ser(String),
     #[error("decryption error")]
     Decrypt,
+    #[error("encryption error")]
+    Encrypt,
     #[error("insufficient shares for threshold")]
     NotEnoughShares,
     #[error("guardian key not recognized")]
     UnknownGuardian,
     #[error("invalid capsule")]
     InvalidCapsule,
-    #[error("bad parameters")]
-    BadParams,
+    #[error("bad parameters: {0}")]
+    BadParams(String),
+    #[error("unsupported capsule version: {0}")]
+    UnsupportedVersion(u16),
+    #[error("key derivation error: {0}")]
+    KeyDerivation(String),
+    #[error("invalid galois field element (division by zero)")]
+    GaloisFieldError,
 }
 
 // ----------------------------- Wallet State -----------------------------
@@ -59,7 +67,7 @@ pub struct PaymentRecord {
     pub memo: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct KeyMaterial {
     pub payment_keys: Vec<[u8; 32]>,
     pub ivk_secrets: Vec<[u8; 32]>,
@@ -192,12 +200,10 @@ pub struct Capsule {
 
 // ----------------------------- Key Schedule -----------------------------
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Zeroize, ZeroizeOnDrop)]
 struct KeySchedule {
-    #[allow(dead_code)]
     k_state: [u8; 32],   // for ratchet chaining (not used externally here)
     k_export: [u8; 32],  // for snapshot AEAD key derivation
-    #[allow(dead_code)]
     k_index: [u8; 32],   // blind locator derivations (optional)
 }
 
@@ -426,7 +432,7 @@ pub fn export_capsule(inputs: ExportInputs) -> Result<Vec<u8>, CapsuleError> {
         nonce,
     };
 
-    // AEAD encrypt state with AAD = header fields (sans ciphertext) unsure about thius one tbh
+    // AEAD encrypt state with AAD = header fields for binding
     let aad = serde_cbor::to_vec(&header_preview).map_err(|e| CapsuleError::Ser(e.to_string()))?;
     let ciphertext = aead
         .encrypt(
@@ -503,7 +509,7 @@ pub fn export_capsule(inputs: ExportInputs) -> Result<Vec<u8>, CapsuleError> {
 
     let wrapped = WrappedKey { guardian_shares, device_share, passphrase_share };
 
-    // Authenticatiooooooon - i love blake3, will it work?
+    // Compute authentication tag over all capsule components
     let mut auth_hasher = Blake3::new();
     auth_hasher.update(&serde_cbor::to_vec(&header_preview).unwrap());
     auth_hasher.update(&serde_cbor::to_vec(&wrapped).unwrap());
@@ -527,6 +533,11 @@ pub struct RecoveryInputs<'a> {
 
 pub fn recover_capsule(inputs: RecoveryInputs) -> Result<SnapshotState, CapsuleError> {
     let cap: Capsule = serde_cbor::from_slice(inputs.capsule_bytes).map_err(|e| CapsuleError::Ser(e.to_string()))?;
+
+    // Verify version
+    if cap.header.version != 1 {
+        return Err(CapsuleError::UnsupportedVersion(cap.header.version));
+    }
 
     // Verify auth
     let mut auth_hasher = Blake3::new();

@@ -1,5 +1,6 @@
 //! Traditional Actions and Tachyactions
-//!
+//! Numan
+//! Numan Thabit
 //! This module implements the two action shapes specified in the Tachyon protocol:
 //!
 //! 1. **Traditional Action**: Compatible with Orchard, includes on-chain ciphertext
@@ -9,7 +10,7 @@
 //! signature. The key difference is that Tachyactions delegate note tracking to
 //! proof-carrying data (tachystamps) rather than on-chain commitments.
 //!
-//! # Security Requirements
+//! # constraints sec
 //!
 //! - Domain-separated signature digests prevent cross-type malleability
 //! - Constant-time comparisons for all fixed-size fields
@@ -44,7 +45,7 @@ const DS_BINDING_SIG: &[u8] = b"zcash-tachyon-binding-sig-v1";
 /// In Tachyon, nullifiers are derived such that they do NOT reveal the note's
 /// position in the Merkle tree (unlike traditional Zcash). This enables oblivious
 /// synchronization without leaking note locations to sync services.
-#[derive(Clone, Copy, Debug, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Serialize, Deserialize)]
 pub struct Nullifier(pub [u8; 32]);
 
 impl PartialEq for Nullifier {
@@ -121,8 +122,48 @@ impl ConstantTimeEq for RandomizedVerifyingKey {
 /// A RedPallas signature over the SpendAuth context.
 ///
 /// 64 bytes: (R, s) where R is a curve point and s is a scalar.
-#[derive(Clone, Copy, Debug, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq)]
 pub struct RedPallasSignature(pub [u8; 64]);
+
+// Custom serialization for [u8; 64] since serde only supports up to 32
+impl Serialize for RedPallasSignature {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        if serializer.is_human_readable() {
+            serializer.serialize_str(&hex::encode(&self.0))
+        } else {
+            serializer.serialize_bytes(&self.0)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for RedPallasSignature {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        if deserializer.is_human_readable() {
+            let s: String = Deserialize::deserialize(deserializer)?;
+            let bytes = hex::decode(&s).map_err(serde::de::Error::custom)?;
+            if bytes.len() != 64 {
+                return Err(serde::de::Error::custom("invalid signature length"));
+            }
+            let mut arr = [0u8; 64];
+            arr.copy_from_slice(&bytes);
+            Ok(Self(arr))
+        } else {
+            let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
+            if bytes.len() != 64 {
+                return Err(serde::de::Error::custom("invalid signature length"));
+            }
+            let mut arr = [0u8; 64];
+            arr.copy_from_slice(&bytes);
+            Ok(Self(arr))
+        }
+    }
+}
 
 impl PartialEq for RedPallasSignature {
     fn eq(&self, other: &Self) -> bool {

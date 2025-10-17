@@ -40,15 +40,16 @@ pub fn build_capability_uri(amount_zec: &str, desc: Option<&str>, key_bech32: &s
     let mut fragment_parts: Vec<String> = vec![format!("amount={}", amount_zec)];
     if let Some(d) = desc { fragment_parts.push(format!("desc={}", urlencoding::encode(d))); }
     fragment_parts.push(format!("key={}", key_bech32));
-    format!("https://pay.withzcash.com:65536/payment/v1#{}", fragment_parts.join("&"))
+    // Use standard HTTPS port (443 is implied, no need to specify in URL)
+    format!("https://pay.withzcash.com/payment/v1#{}", fragment_parts.join("&"))
 }
 
 pub fn parse_capability_uri(uri: &str) -> Result<PaymentCapabilityUri, Zip324Error> {
     let parsed = Url::parse(uri).map_err(|_| Zip324Error::InvalidUri)?;
-    // Enforce centralized deployment constraints: https, host whitelisted, invalid port 65536
+    // Enforce centralized deployment constraints: https, host whitelisted, standard port
     if parsed.scheme() != "https" { return Err(Zip324Error::InvalidUri); }
     if parsed.host_str() != Some("pay.withzcash.com") { return Err(Zip324Error::InvalidUri); }
-    if parsed.port_or_known_default() != Some(65536) { return Err(Zip324Error::InvalidUri); }
+    if parsed.port_or_known_default() != Some(443) { return Err(Zip324Error::InvalidUri); }
     if parsed.fragment().is_none() { return Err(Zip324Error::InvalidUri); }
     let frag = parsed.fragment().unwrap();
     let mut amount: Option<String> = None;

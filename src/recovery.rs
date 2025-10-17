@@ -331,9 +331,12 @@ fn hpke_like_encrypt(recipient_pub: &[u8; 32], aad: &[u8], pt: &[u8]) -> ( [u8;3
     ( *eph_pk.as_bytes(), nonce_bytes, ct )
 }
 
-fn hpke_like_decrypt(recipient_sk: &X25519Secret, eph_pub: &[u8; 32], aad: &[u8], ct: &[u8]) -> Result<Vec<u8>, CapsuleError> {
+fn hpke_like_decrypt(recipient_sk: &X25519Secret, eph_pub: &[u8; 32], nonce: &[u8; 24], aad: &[u8], ct: &[u8]) -> Result<Vec<u8>, CapsuleError> {
+    // 1) Diffie-Hellman with ephemeral public key
     let pk_e = X25519PublicKey::from(*eph_pub);
     let dh = recipient_sk.diffie_hellman(&pk_e);
+    
+    // 2) Derive AEAD key using HKDF with same context as encrypt
     let mut info = Vec::with_capacity(7 + 32 + 32);
     info.extend_from_slice(b"hpke-v1");
     info.extend_from_slice(eph_pub);
@@ -342,9 +345,14 @@ fn hpke_like_decrypt(recipient_sk: &X25519Secret, eph_pub: &[u8; 32], aad: &[u8]
     let hk = Hkdf::<Sha256>::new(Some(b"hpke-like"), dh.as_bytes());
     let mut key = [0u8; 32];
     hk.expand(&info, &mut key).unwrap();
+    
+    // 3) Decrypt with XChaCha20-Poly1305
     let aead = XChaCha20Poly1305::new(AeadKey::from_slice(&key));
-    // Nonce is included by caller
-    Err(CapsuleError::Decrypt)
+    let pt = aead
+        .decrypt(XNonce::from(*nonce), chacha20poly1305::aead::Payload { msg: ct, aad })
+        .map_err(|_| CapsuleError::Decrypt)?;
+    
+    Ok(pt)
 }
 
 // ----------------------------- Export -----------------------------
@@ -515,23 +523,8 @@ pub fn recover_capsule(inputs: RecoveryInputs) -> Result<SnapshotState, CapsuleE
     for gct in &cap.wrapped.guardian_shares {
         if let Some(sk_bytes) = inputs.guardian_keys.get(&gct.label) {
             let sk = X25519Secret::from(*sk_bytes);
-            // Derive share AEAD key
-            let pk_e = gct.eph_pubkey;
-            // KDF key
-            let dh = sk.diffie_hellman(&X25519PublicKey::from(pk_e));
-            let mut info = Vec::with_capacity(7 + 32 + 32);
-            info.extend_from_slice(b"hpke-v1");
-            info.extend_from_slice(&pk_e);
-            let pk_r = X25519PublicKey::from(&sk);
-            info.extend_from_slice(pk_r.as_bytes());
-            let hk = Hkdf::<Sha256>::new(Some(b"hpke-like"), dh.as_bytes());
-            let mut key = [0u8; 32];
-            hk.expand(&info, &mut key).unwrap();
-            let aead = XChaCha20Poly1305::new(AeadKey::from_slice(&key));
             let aad_share = blake3_label(b"guardian-share-aad", &serde_cbor::to_vec(&cap.header).unwrap());
-            let pt = aead
-                .decrypt(XNonce::from(gct.nonce), chacha20poly1305::aead::Payload { msg: &gct.share_ct, aad: &aad_share })
-                .map_err(|_| CapsuleError::Decrypt)?;
+            let pt = hpke_like_decrypt(&sk, &gct.eph_pubkey, &gct.nonce, &aad_share, &gct.share_ct)?;
             let share: ShamirShare = bincode_deserialize(&pt)?;
             shares.push(share);
         }

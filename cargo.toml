@@ -2,11 +2,13 @@
 name = "tachy-wallet"
 version = "0.1.0"
 edition = "2021"
+resolver = "2"
 
 [dependencies]
 # Core cryptographic primitives
 # Note: Blake3 for out-of-circuit hashing; Poseidon for in-circuit proofs
-blake3 = "1.5"
+blake3 = { version = "1.5", features = ["traits-preview"] }
+tempfile = "3.12"
 zeroize = { version = "1.7", features = ["derive"] }
 subtle = "2.5"
 byteorder = "1.5"
@@ -20,6 +22,9 @@ serde = { version = "1.0", features = ["derive"] }
 serde_cbor = "0.11"
 thiserror = "1.0"
 anyhow = "1.0"
+sha2 = "0.10"
+group = "0.13"
+lazy_static = "1.4"
 
 # Additional deps for ZIP-321/324, URIs, storage, encoding
 percent-encoding = "2"
@@ -40,8 +45,8 @@ serde_json = "1"
 zcash_address = "0.5"
 ureq = { version = "2.9", features = ["json"] }
 reddsa = "0.5.1"
-halo2curves = "0.6"
-nova-snark = "0.39"
+# halo2curves is declared below with target-specific asm gating
+nova-snark = { version = "0.39", default-features = false }
 
 [features]
 default = []
@@ -83,21 +88,12 @@ ark-crypto-primitives = { version = "0.4", default-features = false, features = 
 # Pasta curves for Nova (Pallas/Vesta)
 ark-pallas = "0.4"
 ark-vesta = "0.4"
-# Multiple versions needed: 0.6 for our code, 0.8 for nova-snark
-# Both with asm disabled for non-x86_64 compatibility
-halo2curves = { version = "0.6", default-features = false, features = ["bits", "derive_serde"] }
-
 # Poseidon hash - zk-friendly hash function for Zcash Orchard/Tachyon
 poseidon-ark = { version = "0.0.9", features = ["r1cs"] }
 
 # Nova for PCD/recursion over Pasta curves (as per Sean Bowe's vision)
-nova-snark = { version = "0.39", default-features = false }
-
-# Explicit dependency to override nova's halo2curves with asm disabled
-[dependencies.halo2curves-compat]
-package = "halo2curves"
-version = "0.8"
-default-features = false
+# NOTE: Uses halo2curves 0.8 internally; we override it below to disable asm on non-x86_64
+# halo2curves 0.6 is used directly by our code above
 
 # RedPallas signatures (RedDSA over Pallas) for tachyactions
 reddsa = "0.5"
@@ -106,6 +102,17 @@ reddsa = "0.5"
 # orchard = "0.7"
 # zcash_protocol = "0.1"
 # pqcrypto-mlkem = "0.5"
+
+# Override nova-snark's halo2curves 0.8 dependency to disable asm by default
+# This prevents build failures on non-x86_64 targets (e.g., Apple Silicon)
+[dependencies.halo2curves]
+version = "0.8"
+default-features = false
+features = ["bits", "derive_serde", "bn256-table"]
+
+# Enable asm feature only on x86_64 for performance
+[target.'cfg(target_arch = "x86_64")'.dependencies]
+halo2curves = { version = "0.8", default-features = false, features = ["bits", "derive_serde", "bn256-table", "asm"] }
 
 [lib]
 name = "tachy_wallet"

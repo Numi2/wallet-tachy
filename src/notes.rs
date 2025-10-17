@@ -2,7 +2,7 @@
 //!
 //! This module implements the simplified Tachyon note structure and nullifier
 //! derivation scheme designed for oblivious synchronization.
-//!
+//! Numi
 //! # Tachyon Notes
 //!
 //! Unlike Orchard's complex note structure `(d, pk_d, v, ρ, Ψ, rcm)`, Tachyon uses
@@ -667,6 +667,111 @@ mod tests {
 
         // Nullifier and commitment should be different
         assert_ne!(cm.0, nf.0);
+    }
+
+    #[test]
+    fn test_oblivious_sync_privacy_guarantee() {
+        // CRITICAL TEST: Verify that nullifiers don't leak note positions
+        //
+        // In Tachyon, nullifiers are derived independently of note commitments.
+        // This prevents oblivious sync services from correlating a nullifier
+        // with a specific position in the Merkle tree.
+        //
+        // Property: nf = F_nk(Ψ || flavor), NOT dependent on cm or position
+
+        let nk = NullifierKey::random(OsRng);
+        let pk = PaymentKey::random(OsRng);
+        
+        // Create two notes with SAME psi and flavor but DIFFERENT commitments
+        let psi = Nonce::random(OsRng);
+        let flavor = NullifierFlavor::random(OsRng);
+        
+        let rcm1 = CommitmentKey::random(OsRng);
+        let rcm2 = CommitmentKey::random(OsRng);
+        
+        let note1 = TachyonNote::new(pk, 1000, psi, rcm1);
+        let note2 = TachyonNote::new(pk, 2000, psi, rcm2); // Different value too
+        
+        // Commitments MUST be different (different rcm, different value)
+        assert_ne!(note1.commitment(), note2.commitment());
+        
+        // But nullifiers MUST be identical (same nk, psi, flavor)
+        let nf1 = note1.nullifier(&nk, &flavor);
+        let nf2 = note2.nullifier(&nk, &flavor);
+        assert_eq!(nf1, nf2);
+        
+        // This proves: An oblivious sync service that knows nf1
+        // CANNOT determine which commitment (cm1 or cm2) it corresponds to
+        // because the nullifier is independent of the commitment!
+    }
+
+    #[test]
+    fn test_flavor_provides_unlinkability() {
+        // SECURITY TEST: Verify that flavor provides unlinkability
+        //
+        // The oblivious sync service learns nullifiers when tracking them.
+        // If the same note is spent in different contexts (e.g., different
+        // chain forks), the flavor can be changed to produce different nullifiers,
+        // preventing the service from linking the spends.
+
+        let nk = NullifierKey::random(OsRng);
+        let psi = Nonce::random(OsRng);
+        
+        // Same note, different flavors (different sync contexts)
+        let flavor_chain_a = NullifierFlavor::random(OsRng);
+        let flavor_chain_b = NullifierFlavor::random(OsRng);
+        
+        let nf_a = derive_nullifier(&nk, &psi, &flavor_chain_a);
+        let nf_b = derive_nullifier(&nk, &psi, &flavor_chain_b);
+        
+        // Different flavors MUST produce different nullifiers
+        assert_ne!(nf_a, nf_b);
+        
+        // This proves: The sync service cannot link two spends of the same
+        // note across different contexts, preserving privacy even when
+        // the same wallet state is used in multiple scenarios.
+    }
+
+    #[test]
+    fn test_nullifier_collision_resistance() {
+        // SECURITY TEST: Verify that nullifiers are collision-resistant
+        //
+        // Different notes should produce different nullifiers with overwhelming
+        // probability (collision probability: ~2^-256)
+
+        let nk = NullifierKey::random(OsRng);
+        let flavor = NullifierFlavor::random(OsRng);
+        
+        let psi1 = Nonce::random(OsRng);
+        let psi2 = Nonce::random(OsRng);
+        
+        let nf1 = derive_nullifier(&nk, &psi1, &flavor);
+        let nf2 = derive_nullifier(&nk, &psi2, &flavor);
+        
+        // With overwhelming probability, should be different
+        assert_ne!(nf1, nf2);
+    }
+
+    #[test]
+    fn test_nullifier_key_isolation() {
+        // SECURITY TEST: Different nullifier keys produce different nullifiers
+        //
+        // This ensures that even if two users receive notes with the same
+        // (psi, flavor), their nullifiers will be different (different nk).
+
+        let nk1 = NullifierKey::random(OsRng);
+        let nk2 = NullifierKey::random(OsRng);
+        
+        let psi = Nonce::random(OsRng);
+        let flavor = NullifierFlavor::random(OsRng);
+        
+        let nf1 = derive_nullifier(&nk1, &psi, &flavor);
+        let nf2 = derive_nullifier(&nk2, &psi, &flavor);
+        
+        // Different nullifier keys MUST produce different nullifiers
+        assert_ne!(nf1, nf2);
+        
+        // This prevents cross-wallet correlation attacks
     }
 }
 

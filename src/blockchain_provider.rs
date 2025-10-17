@@ -675,6 +675,7 @@ mod tests {
     }
     
     #[test]
+    #[ignore = "Requires local RPC node running on localhost:8232"]
     fn test_rpc_provider_creation() {
         let config = RpcConfig::default();
         let provider = RpcBlockchainProvider::new(config);

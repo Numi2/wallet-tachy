@@ -1,6 +1,8 @@
 //! Tachyon Wallet Persistence Layer
 //!
 //! Provides encrypted, durable storage for wallet state using the sled embedded database.
+
+#![allow(missing_docs)]
 //!
 //! # Security Model
 //!
@@ -180,6 +182,7 @@ struct EncryptionKey([u8; 32]);
 
 impl EncryptionKey {
     /// Encrypt data with deterministic nonce derived from context.
+    #[allow(dead_code)]
     fn encrypt(&self, plaintext: &[u8], context: &[u8]) -> Result<Vec<u8>, PersistenceError> {
         let cipher = XChaCha20Poly1305::new((&self.0).into());
 
@@ -193,6 +196,7 @@ impl EncryptionKey {
     }
 
     /// Decrypt data with deterministic nonce derived from context.
+    #[allow(dead_code)]
     fn decrypt(&self, ciphertext: &[u8], context: &[u8]) -> Result<Vec<u8>, PersistenceError> {
         let cipher = XChaCha20Poly1305::new((&self.0).into());
 
@@ -220,10 +224,12 @@ struct WalletDatabase {
     transactions: Tree,
     capsules: Tree,
     sync_checkpoints: Tree,
+    #[allow(dead_code)]
     merkle_cache: Tree,
     config: Tree,
 
     // Index trees
+    #[allow(dead_code)]
     balance_index: Tree,
 }
 
@@ -413,8 +419,11 @@ pub struct WalletExport {
 /// Main wallet storage interface.
 pub struct WalletStore {
     db: WalletDatabase,
+    #[allow(dead_code)]
     wallet_key: EncryptionKey,
+    #[allow(dead_code)]
     metadata_key: EncryptionKey,
+    #[allow(dead_code)]
     tx_key: EncryptionKey,
     network: NetworkType,
 }
@@ -793,6 +802,7 @@ impl WalletStore {
     }
     
     /// List all checkpoints (for export).
+    #[allow(dead_code)]
     fn list_all_checkpoints(&self) -> Result<Vec<SyncCheckpoint>, PersistenceError> {
         let mut checkpoints = Vec::new();
         
@@ -810,6 +820,7 @@ impl WalletStore {
     }
     
     /// Save checkpoint directly (for import).
+    #[allow(dead_code)]
     fn save_checkpoint_direct(&mut self, checkpoint: &SyncCheckpoint) -> Result<(), PersistenceError> {
         let key = format!("checkpoint_{:016}", checkpoint.block_height);
         let value = serde_cbor::to_vec(checkpoint)

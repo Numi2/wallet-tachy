@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use percent_encoding::{percent_decode_str, percent_encode, NON_ALPHANUMERIC};
 use serde::{Deserialize, Serialize};
 use zcash_address::{ZcashAddress, Network};

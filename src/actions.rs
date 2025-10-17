@@ -35,6 +35,7 @@ const DS_TRADITIONAL_ACTION: &[u8] = b"zcash-tachyon-trad-action-v1";
 const DS_TACHYACTION: &[u8] = b"zcash-tachyon-tachyaction-v1";
 
 /// Domain tag for binding signature
+#[allow(dead_code)]
 const DS_BINDING_SIG: &[u8] = b"zcash-tachyon-binding-sig-v1";
 
 // ----------------------------- Fixed-Size Newtypes -----------------------------
@@ -263,7 +264,7 @@ pub struct TraditionalAction {
     pub nf: Nullifier,
     
     /// Note commitment being created
-    pub cmX: NoteCommitment,
+    pub cm_x: NoteCommitment,
     
     /// Net value commitment (homomorphic)
     pub cv_net: ValueCommitment,
@@ -292,7 +293,7 @@ impl TraditionalAction {
     pub fn signature_digest(&self, binding_data: &[u8]) -> [u8; 64] {
         compute_traditional_signature_digest(
             &self.nf,
-            &self.cmX,
+            &self.cm_x,
             &self.cv_net,
             &self.rk,
             &self.epk,
@@ -304,7 +305,7 @@ impl TraditionalAction {
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(32 + 32 + 32 + 32 + 64 + 32 + 4 + self.ciphertext.len());
         buf.extend_from_slice(&self.nf.0);
-        buf.extend_from_slice(&self.cmX.0);
+        buf.extend_from_slice(&self.cm_x.0);
         buf.extend_from_slice(&self.cv_net.0);
         buf.extend_from_slice(&self.rk.0);
         buf.extend_from_slice(&self.sig.0);
@@ -327,8 +328,8 @@ impl TraditionalAction {
         nf.copy_from_slice(&bytes[cursor..cursor + 32]);
         cursor += 32;
         
-        let mut cmX = [0u8; 32];
-        cmX.copy_from_slice(&bytes[cursor..cursor + 32]);
+        let mut cm_x = [0u8; 32];
+        cm_x.copy_from_slice(&bytes[cursor..cursor + 32]);
         cursor += 32;
         
         let mut cv_net = [0u8; 32];
@@ -363,7 +364,7 @@ impl TraditionalAction {
         
         Ok(Self {
             nf: Nullifier(nf),
-            cmX: NoteCommitment(cmX),
+            cm_x: NoteCommitment(cm_x),
             cv_net: ValueCommitment(cv_net),
             rk: RandomizedVerifyingKey(rk),
             sig: RedPallasSignature(sig),
@@ -456,7 +457,7 @@ impl Tachyaction {
 /// All fields except `sig` and `ciphertext` are included in the digest.
 fn compute_traditional_signature_digest(
     nf: &Nullifier,
-    cmX: &NoteCommitment,
+    cm_x: &NoteCommitment,
     cv_net: &ValueCommitment,
     rk: &RandomizedVerifyingKey,
     epk: &EphemeralPublicKey,
@@ -468,7 +469,7 @@ fn compute_traditional_signature_digest(
         .to_state();
     
     hasher.update(&nf.0);
-    hasher.update(&cmX.0);
+    hasher.update(&cm_x.0);
     hasher.update(&cv_net.0);
     hasher.update(&rk.0);
     hasher.update(&epk.0);
@@ -635,7 +636,7 @@ mod tests {
     fn test_traditional_action_serialization() {
         let action = TraditionalAction {
             nf: Nullifier([1u8; 32]),
-            cmX: NoteCommitment([2u8; 32]),
+            cm_x: NoteCommitment([2u8; 32]),
             cv_net: ValueCommitment([3u8; 32]),
             rk: RandomizedVerifyingKey([4u8; 32]),
             sig: RedPallasSignature([5u8; 64]),
@@ -647,7 +648,7 @@ mod tests {
         let decoded = TraditionalAction::from_bytes(&bytes).unwrap();
         
         assert_eq!(action.nf, decoded.nf);
-        assert_eq!(action.cmX, decoded.cmX);
+        assert_eq!(action.cm_x, decoded.cm_x);
         assert_eq!(action.cv_net, decoded.cv_net);
         assert_eq!(action.ciphertext, decoded.ciphertext);
     }
@@ -671,12 +672,12 @@ mod tests {
     #[test]
     fn test_signature_digest_domain_separation() {
         let nf = Nullifier([0u8; 32]);
-        let cmX = NoteCommitment([0u8; 32]);
+        let cm_x = NoteCommitment([0u8; 32]);
         let cv_net = ValueCommitment([0u8; 32]);
         let rk = RandomizedVerifyingKey([0u8; 32]);
         let epk = EphemeralPublicKey([0u8; 32]);
         
-        let trad_digest = compute_traditional_signature_digest(&nf, &cmX, &cv_net, &rk, &epk, b"");
+        let trad_digest = compute_traditional_signature_digest(&nf, &cm_x, &cv_net, &rk, &epk, b"");
         let tachy_digest = compute_tachyaction_signature_digest(&cv_net, &rk, b"");
         
         // Different domain tags should produce different digests
@@ -711,7 +712,7 @@ mod tests {
         
         let action = TraditionalAction {
             nf: Nullifier([1u8; 32]),
-            cmX: NoteCommitment([2u8; 32]),
+            cm_x: NoteCommitment([2u8; 32]),
             cv_net: ValueCommitment([3u8; 32]),
             rk: RandomizedVerifyingKey(vk.into()),
             sig: RedPallasSignature([0u8; 64]), // Placeholder, will replace

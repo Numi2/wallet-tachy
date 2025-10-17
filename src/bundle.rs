@@ -15,6 +15,7 @@
 //! transaction size.
 
 #![forbid(unsafe_code)]
+#![allow(missing_docs)]
 
 use crate::actions::*;
 use crate::value_commit::{self, BindingSig, BindingVerifyingKey, ValueCommit};
@@ -30,12 +31,16 @@ use crate::tachystamps::{Tachygram, Compressed};
 // Placeholder types when tachystamps feature is disabled
 #[cfg(not(feature = "tachystamps"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// A unified representation of note commitments and nullifiers (placeholder).
 pub struct Tachygram(pub [u8; 32]);
 
 #[cfg(not(feature = "tachystamps"))]
 #[derive(Clone, Debug, Serialize, Deserialize)]
+/// Compressed PCD proof (placeholder).
 pub struct Compressed {
+    /// Proof bytes
     pub proof: Vec<u8>,
+    /// Verification key bytes
     pub vk: Vec<u8>,
 }
 
@@ -235,7 +240,7 @@ impl TachyBundle {
         // Include commitments to action data (order-dependent)
         for action in &self.actions {
             hasher.update(&action.nf.0);
-            hasher.update(&action.cmX.0);
+            hasher.update(&action.cm_x.0);
         }
         
         for action in &self.tachyactions {
@@ -273,7 +278,7 @@ impl TachyBundle {
         for action in &self.actions {
             // Both nullifier and commitment are tachygrams
             tachygrams.push(Tachygram(action.nf.0));
-            tachygrams.push(Tachygram(action.cmX.0));
+            tachygrams.push(Tachygram(action.cm_x.0));
         }
         
         // Tachyactions' tachygrams are in the tachystamp proof, not here
@@ -295,6 +300,7 @@ impl TachyBundle {
 
 // ----------------------------- Errors -----------------------------
 
+/// Errors that can occur during bundle operations.
 #[derive(Error, Debug)]
 pub enum BundleError {
     #[error("bundle is empty")]

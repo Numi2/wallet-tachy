@@ -2,6 +2,8 @@
 //!
 //! This module provides persistent storage for ZIP-324 payment capability URIs
 //! and their status. It enables:
+
+#![allow(missing_docs)]
 //! - Tracking outbound payments (sender side)
 //! - Tracking inbound payments (recipient side)
 //! - Recovery scanning with gap limits
@@ -49,6 +51,7 @@ pub enum PaymentStatus {
 }
 
 impl PaymentStatus {
+    #[allow(dead_code)]
     fn as_str(&self) -> &'static str {
         match self {
             PaymentStatus::InProgress => "in_progress",
@@ -59,6 +62,7 @@ impl PaymentStatus {
         }
     }
 
+    #[allow(dead_code)]
     fn from_str(s: &str) -> Result<Self, StatusDbError> {
         match s {
             "in_progress" => Ok(PaymentStatus::InProgress),

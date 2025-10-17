@@ -66,6 +66,7 @@ pub mod persistence;
 pub mod status_db;
 
 // ZIP modules (mostly working)
+/// ZIP-321 Payment Request URI encoding and decoding
 pub mod zip321;
 
 #[cfg(feature = "zip324-full")]

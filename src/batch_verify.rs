@@ -1,6 +1,8 @@
 //! Batch Signature Verification for Tachyon
 //! Numan
 //! Goal = efficient batch verification of RedPallas signatures using reddsa crate's batch verification API.
+
+#![allow(missing_docs)]
 //!
 //! Verifying signatures one-by-one is expensive:
 //! - 1000 actions × 200 μs/signature = 200ms

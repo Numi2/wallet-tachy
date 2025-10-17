@@ -2,6 +2,8 @@
 //!
 //! This module implements Pedersen value commitments over the Pallas curve and the
 //! binding signature scheme that proves balance integrity in transactions.
+
+#![allow(missing_docs)]
 //!
 //! # Pedersen Value Commitments
 //!
@@ -47,9 +49,11 @@ use thiserror::Error;
 // ----------------------------- Constants -----------------------------
 
 /// Domain tag for value commitment
+#[allow(dead_code)]
 const DS_VALUE_COMMIT: &[u8] = b"zcash-tachyon-value-commit-v1";
 
 /// Domain tag for binding signature
+#[allow(dead_code)]
 const DS_BINDING_SIG: &[u8] = b"zcash-tachyon-binding-sig-v1";
 
 // ----------------------------- Generators -----------------------------

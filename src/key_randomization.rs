@@ -2,6 +2,8 @@
 //!
 //! Goal = key re-randomization for spend authorization, providing
 //! unlinkability across transactions while maintaining security.
+
+#![allow(missing_docs)]
 //!
 //! # Key Re-randomization
 //!

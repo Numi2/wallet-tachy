@@ -2,6 +2,8 @@
 //! Numan 
 //! This module implements ChaCha20-Poly1305 encryption for note plaintexts in
 //! Traditional Actions, allowing on-chain recovery from the blockchain.
+
+#![allow(missing_docs)]
 //!
 //! # Encryption Scheme
 //!

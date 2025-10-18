@@ -36,6 +36,9 @@ pub mod batch_verify;
 // Poseidon chip for Halo2
 pub mod poseidon_chip;
 
+// Ragu: Proof-carrying data toolkit
+pub mod ragu;
+
 // Tachystamps with Halo2 (always enabled)
 pub mod tachystamps;
 

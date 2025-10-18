@@ -102,10 +102,18 @@ impl ComparisonGadget {
         a: D::W,
         b: D::W,
     ) -> Result<D::W, Error> {
-        let diff = dr.sub(a, b)?;
+        let diff = dr.sub(a.clone(), b.clone())?;
         
-        // Allocate result boolean (witness will be 1 if equal, 0 if not)
-        let result = dr.alloc(Witness::empty())?;
+        // Allocate result boolean with witness when available
+        let result_val = Witness::from_maybe::<D, _>({
+            // Try to reconstruct witness for result in proving contexts
+            // Default to None in verification contexts
+            // Note: We can't access raw values from wires here generically,
+            // so we leave as empty for generic Driver and rely on circuit callers
+            // to provide specialized versions where needed.
+            Maybe::none()
+        });
+        let result = dr.alloc(result_val)?;
         
         // Constraint 1: result is boolean
         dr.assert_boolean(result.clone())?;
@@ -123,6 +131,7 @@ impl ComparisonGadget {
         // - If diff = 0: result must be 1 (otherwise 0 * inv ≠ 1 - result)
         // - If diff ≠ 0: result must be 0 and inv = diff^-1
         
+        // Allocate inverse witness if available
         let inv = dr.alloc(Witness::empty())?;
         let diff_inv_product = dr.mul(diff, inv)?;
         let one = dr.alloc_const(D::F::one())?;
@@ -175,29 +184,11 @@ impl HashGadget {
         dr: &mut D,
         state: &[D::W; Self::WIDTH],
     ) -> Result<[D::W; Self::WIDTH], Error> {
-        // Simplified MDS for demonstration
-        // In production, use actual Poseidon MDS matrix constants
-        
-        // new_state[0] = 2*state[0] + state[1] + state[2]
-        // new_state[1] = state[0] + 2*state[1] + state[2]
-        // new_state[2] = state[0] + state[1] + 2*state[2]
-        
-        let two = D::F::one().double();
-        
-        let s0_times_2 = dr.scale(state[0].clone(), two)?;
-        let s1_times_2 = dr.scale(state[1].clone(), two)?;
-        let s2_times_2 = dr.scale(state[2].clone(), two)?;
-        
-        let new_0_temp = dr.add(s0_times_2, state[1].clone())?;
-        let new_0 = dr.add(new_0_temp, state[2].clone())?;
-        
-        let new_1_temp = dr.add(state[0].clone(), s1_times_2)?;
-        let new_1 = dr.add(new_1_temp, state[2].clone())?;
-        
-        let new_2_temp = dr.add(state[0].clone(), state[1].clone())?;
-        let new_2 = dr.add(new_2_temp, s2_times_2)?;
-        
-        Ok([new_0, new_1, new_2])
+        // Use secure MDS constants when field is Pallas; otherwise fail-closed
+        // We implement this generically by requiring callers to pass already
+        // converted constants through Driver::alloc_const.
+        // For now, we treat MDS as identity if constants are unavailable and return error.
+        Err(Error::Other("Poseidon MDS not configured for this Driver/Field".to_string()))
     }
     
     /// Add round constants to state
@@ -209,27 +200,140 @@ impl HashGadget {
         state: &[D::W; Self::WIDTH],
         round: usize,
     ) -> Result<[D::W; Self::WIDTH], Error> {
-        // Generate round constants deterministically
-        // In production, use constants from poseidon_chip.rs
-        let rc0 = D::F::one();
-        let rc1 = D::F::one().double();
-        let rc2 = D::F::one().double().double();
-        
-        // Add pseudo-randomness based on round number
-        let round_offset = D::F::one();
-        for _ in 0..round {
-            let _ = round_offset.add(&round_offset);
+        let _ = (dr, round);
+        Err(Error::Other("Poseidon round constants not configured for this Driver/Field".to_string()))
+    }
+
+    // ======================= Pallas-specific implementations =======================
+    /// Add round constants for Pallas using secure constants
+    pub fn add_round_constants_pallas<D: Driver<F = crate::ragu::fields::PallasField>>(
+        dr: &mut D,
+        state: &[D::W; Self::WIDTH],
+        round: usize,
+    ) -> Result<[D::W; Self::WIDTH], Error> {
+        use crate::poseidon_chip::ROUND_CONSTANTS;
+        use crate::ragu::fields::PallasField;
+        if round >= ROUND_CONSTANTS.len() {
+            return Err(Error::Other("Poseidon round index out of bounds".to_string()));
         }
-        
-        let const0 = dr.alloc_const(rc0)?;
-        let const1 = dr.alloc_const(rc1)?;
-        let const2 = dr.alloc_const(rc2)?;
-        
-        let new_state_0 = dr.add(state[0].clone(), const0)?;
-        let new_state_1 = dr.add(state[1].clone(), const1)?;
-        let new_state_2 = dr.add(state[2].clone(), const2)?;
-        
-        Ok([new_state_0, new_state_1, new_state_2])
+        let rcs = &ROUND_CONSTANTS[round];
+        let rc0 = dr.alloc_const(PallasField(rcs[0]))?;
+        let rc1 = dr.alloc_const(PallasField(rcs[1]))?;
+        let rc2 = dr.alloc_const(PallasField(rcs[2]))?;
+        let new0 = dr.add(state[0].clone(), rc0)?;
+        let new1 = dr.add(state[1].clone(), rc1)?;
+        let new2 = dr.add(state[2].clone(), rc2)?;
+        Ok([new0, new1, new2])
+    }
+
+    /// Apply MDS for Pallas using secure matrix
+    pub fn apply_mds_pallas<D: Driver<F = crate::ragu::fields::PallasField>>(
+        dr: &mut D,
+        state: &[D::W; Self::WIDTH],
+    ) -> Result<[D::W; Self::WIDTH], Error> {
+        use crate::poseidon_chip::MDS_MATRIX;
+        use crate::ragu::fields::PallasField;
+        let mut out: [Option<D::W>; Self::WIDTH] = [None, None, None];
+        for i in 0..Self::WIDTH {
+            let m0 = dr.scale(state[0].clone(), PallasField(MDS_MATRIX[i][0]))?;
+            let m1 = dr.scale(state[1].clone(), PallasField(MDS_MATRIX[i][1]))?;
+            let m2 = dr.scale(state[2].clone(), PallasField(MDS_MATRIX[i][2]))?;
+            let s01 = dr.add(m0, m1)?;
+            let sum = dr.add(s01, m2)?;
+            out[i] = Some(sum);
+        }
+        Ok([out[0].clone().unwrap(), out[1].clone().unwrap(), out[2].clone().unwrap()])
+    }
+
+    /// Full round for Pallas
+    pub fn full_round_pallas<D: Driver<F = crate::ragu::fields::PallasField>>(
+        dr: &mut D,
+        state: [D::W; Self::WIDTH],
+        round: usize,
+    ) -> Result<[D::W; Self::WIDTH], Error> {
+        let state = Self::add_round_constants_pallas(dr, &state, round)?;
+        let s0 = Self::sbox(dr, state[0].clone())?;
+        let s1 = Self::sbox(dr, state[1].clone())?;
+        let s2 = Self::sbox(dr, state[2].clone())?;
+        Self::apply_mds_pallas(dr, &[s0, s1, s2])
+    }
+
+    /// Partial round for Pallas
+    pub fn partial_round_pallas<D: Driver<F = crate::ragu::fields::PallasField>>(
+        dr: &mut D,
+        state: [D::W; Self::WIDTH],
+        round: usize,
+    ) -> Result<[D::W; Self::WIDTH], Error> {
+        let state = Self::add_round_constants_pallas(dr, &state, round)?;
+        let s0 = Self::sbox(dr, state[0].clone())?;
+        Self::apply_mds_pallas(dr, &[s0, state[1].clone(), state[2].clone()])
+    }
+
+    /// Permutation for Pallas Poseidon
+    pub fn permute_pallas<D: Driver<F = crate::ragu::fields::PallasField>>(
+        dr: &mut D,
+        mut state: [D::W; Self::WIDTH],
+    ) -> Result<[D::W; Self::WIDTH], Error> {
+        for round in 0..(Self::FULL_ROUNDS / 2) {
+            state = Self::full_round_pallas(dr, state, round)?;
+        }
+        for round in 0..Self::PARTIAL_ROUNDS {
+            state = Self::partial_round_pallas(dr, state, Self::FULL_ROUNDS / 2 + round)?;
+        }
+        for round in 0..(Self::FULL_ROUNDS / 2) {
+            state = Self::full_round_pallas(dr, state, Self::FULL_ROUNDS / 2 + Self::PARTIAL_ROUNDS + round)?;
+        }
+        Ok(state)
+    }
+
+    /// Hash for Pallas (sponge with rate=2)
+    pub fn hash_pallas<D: Driver<F = crate::ragu::fields::PallasField>>(
+        dr: &mut D,
+        inputs: &[D::W],
+    ) -> Result<D::W, Error> {
+        if inputs.is_empty() {
+            return Err(Error::InvalidWitness("Cannot hash empty input".to_string()));
+        }
+        let zero = dr.alloc_const(crate::ragu::fields::PallasField::zero())?;
+        let mut state = [zero.clone(), zero.clone(), zero];
+        for chunk in inputs.chunks(Self::RATE) {
+            for (i, input) in chunk.iter().enumerate() {
+                state[i] = dr.add(state[i].clone(), input.clone())?;
+            }
+            state = Self::permute_pallas(dr, state)?;
+        }
+        Ok(state[0].clone())
+    }
+
+    /// Convert an arbitrary domain tag to a Pallas field element using Blake2b
+    fn pallas_domain_to_field(tag: &[u8]) -> crate::ragu::fields::PallasField {
+        use blake2b_simd::Params;
+        use halo2curves::ff::PrimeField as _;
+        use halo2curves::pasta::Fp as PallasFp;
+        let hash = Params::new().hash_length(64).to_state().update(tag).finalize();
+        let hb = hash.as_bytes();
+        let mut repr = [0u8; 32];
+        repr.copy_from_slice(&hb[..32]);
+        let fe = PallasFp::from_repr(repr).unwrap_or_else(|| {
+            let mut repr2 = [0u8; 32];
+            repr2.copy_from_slice(&hb[32..64]);
+            PallasFp::from_repr(repr2).unwrap_or(PallasFp::ZERO)
+        });
+        crate::ragu::fields::PallasField(fe)
+    }
+
+    /// Domain-separated hash for Pallas: domain tag is hashed to field
+    pub fn hash_with_domain_pallas<D: Driver<F = crate::ragu::fields::PallasField>>(
+        dr: &mut D,
+        domain_tag: &[u8],
+        inputs: &[D::W],
+    ) -> Result<D::W, Error> {
+        let tag_fe = Self::pallas_domain_to_field(domain_tag);
+        let tag_wire = dr.alloc_const(tag_fe)?;
+        let mut all_inputs = Vec::with_capacity(inputs.len() + 1);
+        all_inputs.push(tag_wire);
+        all_inputs.extend_from_slice(inputs);
+        Self::hash_pallas(dr, &all_inputs)
     }
     
     /// Perform a full round: add constants, S-box all elements, apply MDS
@@ -271,21 +375,19 @@ impl HashGadget {
         dr: &mut D,
         mut state: [D::W; Self::WIDTH],
     ) -> Result<[D::W; Self::WIDTH], Error> {
-        // First half: full rounds
+        // Bail out if round constants and MDS not configured
+        // The add_round_constants/apply_mds currently return error to enforce
+        // fail-closed security until secure parameters are wired in.
+        // Attempting to run permutation will surface that error.
         for round in 0..(Self::FULL_ROUNDS / 2) {
             state = Self::full_round(dr, state, round)?;
         }
-        
-        // Middle: partial rounds
         for round in 0..Self::PARTIAL_ROUNDS {
             state = Self::partial_round(dr, state, Self::FULL_ROUNDS / 2 + round)?;
         }
-        
-        // Second half: full rounds
         for round in 0..(Self::FULL_ROUNDS / 2) {
             state = Self::full_round(dr, state, Self::FULL_ROUNDS / 2 + Self::PARTIAL_ROUNDS + round)?;
         }
-        
         Ok(state)
     }
     
@@ -307,7 +409,7 @@ impl HashGadget {
             ));
         }
         
-        // Initialize state to zero
+        // Initialize state to zero; fail if Poseidon params not configured later
         let zero = dr.alloc_const(D::F::zero())?;
         let mut state = [zero.clone(), zero.clone(), zero];
         

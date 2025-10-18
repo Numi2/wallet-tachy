@@ -579,6 +579,8 @@ pub struct ConstraintSystem<F: Field> {
     pub num_variables: usize,
     /// Number of public inputs
     pub num_public_inputs: usize,
+    /// Total number of linear-combination terms across all constraints
+    total_lc_terms: usize,
 }
 
 /// Resource limits for constraint systems
@@ -591,6 +593,8 @@ pub mod limits {
     pub const MAX_VARIABLES: usize = 10_000_000;
     /// Maximum number of public inputs
     pub const MAX_PUBLIC_INPUTS: usize = 1_000_000;
+    /// Maximum total number of LC terms across all constraints (≈ 200M terms)
+    pub const MAX_TOTAL_LC_TERMS: usize = 200_000_000;
 }
 
 impl<F: Field> ConstraintSystem<F> {
@@ -600,6 +604,7 @@ impl<F: Field> ConstraintSystem<F> {
             constraints: Vec::new(),
             num_variables: 0,
             num_public_inputs: 0,
+            total_lc_terms: 0,
         }
     }
     
@@ -613,8 +618,15 @@ impl<F: Field> ConstraintSystem<F> {
     /// Explicit variable limit checking could be added if needed, but adds
     /// overhead to every allocation. Current approach is sufficient for DoS prevention.
     pub fn alloc_variable(&mut self) -> usize {
+        if self.num_variables >= limits::MAX_VARIABLES {
+            panic!("Variable limit exceeded");
+        }
+        let next = self
+            .num_variables
+            .checked_add(1)
+            .expect("usize overflow on variable allocation");
         let idx = self.num_variables;
-        self.num_variables += 1;
+        self.num_variables = next;
         idx
     }
     
@@ -622,13 +634,7 @@ impl<F: Field> ConstraintSystem<F> {
     fn validate_linear_combination(&self, lc: &LinearCombination<F>) -> Result<(), Error> {
         for (_, var_idx) in lc.terms() {
             if *var_idx >= self.num_variables {
-                return Err(Error::CircuitMismatch(
-                    format!(
-                        "Invalid variable index {} (max {})", 
-                        var_idx, 
-                        self.num_variables - 1
-                    )
-                ));
+                return Err(Error::CircuitMismatch("Invalid variable index".to_string()));
             }
         }
         Ok(())
@@ -643,19 +649,26 @@ impl<F: Field> ConstraintSystem<F> {
     pub fn add_constraint(&mut self, constraint: R1CSConstraint<F>) -> Result<(), Error> {
         // Check resource limit
         if self.constraints.len() >= limits::MAX_CONSTRAINTS {
-            return Err(Error::Other(
-                format!(
-                    "Maximum constraint limit exceeded: {} >= {}",
-                    self.constraints.len(),
-                    limits::MAX_CONSTRAINTS
-                )
-            ));
+            return Err(Error::Other("Maximum constraint limit exceeded".to_string()));
         }
         
         // Validate all variable indices in the constraint
         self.validate_linear_combination(&constraint.a)?;
         self.validate_linear_combination(&constraint.b)?;
         self.validate_linear_combination(&constraint.c)?;
+        
+        // Track cumulative LC terms and enforce a global cap to bound memory
+        let terms_in_constraint = constraint.a.terms().len()
+            + constraint.b.terms().len()
+            + constraint.c.terms().len();
+        let new_total = self
+            .total_lc_terms
+            .checked_add(terms_in_constraint)
+            .ok_or_else(|| Error::Other("LC term counter overflow".to_string()))?;
+        if new_total > limits::MAX_TOTAL_LC_TERMS {
+            return Err(Error::Other("Maximum LC terms limit exceeded".to_string()));
+        }
+        self.total_lc_terms = new_total;
         
         self.constraints.push(constraint);
         Ok(())
@@ -666,10 +679,7 @@ impl<F: Field> ConstraintSystem<F> {
     /// # Safety
     /// Caller must ensure all variable indices are valid.
     /// Only use this when performance is critical and validation is done elsewhere.
-    #[allow(dead_code)]
-    fn add_constraint_unchecked(&mut self, constraint: R1CSConstraint<F>) {
-        self.constraints.push(constraint);
-    }
+    // Unchecked insertion removed to enforce validation invariants globally
     
     /// Get the number of constraints
     pub fn num_constraints(&self) -> usize {

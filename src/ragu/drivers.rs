@@ -1,6 +1,7 @@
 //! Concrete Driver implementations for different contexts
 
 use super::*;
+use zeroize::Zeroize;
 
 // ============================================================================
 // Wire Types
@@ -191,13 +192,10 @@ impl<F: Field> Driver for ProverDriver<F> {
             c: zero,
         })?;
         
-        // THEN check witness satisfies the constraint
-        // This ensures constraint structure is complete even if witness is invalid
+        // THEN check witness satisfies the constraint without leaking details
+        // Avoid including sensitive indices/values in error messages
         if !a.value.is_zero() {
-            return Err(Error::SynthesisError(
-                format!("Constraint violation: wire {} value {:?} is not zero", 
-                        a.index, a.value)
-            ));
+            return Err(Error::SynthesisError("Constraint violation: expected zero".to_string()));
         }
         
         Ok(())
@@ -205,6 +203,17 @@ impl<F: Field> Driver for ProverDriver<F> {
     
     fn new_io(&self) -> Self::IO {
         VecSink::new()
+    }
+}
+
+// Zeroize prover assignments on drop where supported
+impl<F> Drop for ProverDriver<F>
+where
+    F: Field + Zeroize,
+{
+    fn drop(&mut self) {
+        // Best-effort zeroization of witness assignments
+        self.assignments.zeroize();
     }
 }
 
@@ -487,12 +496,10 @@ impl<F: Field> Driver for PublicInputDriver<F> {
             c: zero,
         })?;
         
-        // THEN check witness if available
+        // THEN check witness if available without leaking indices/values
         if let Some(val) = a.value {
             if !val.is_zero() {
-                return Err(Error::SynthesisError(
-                    format!("Constraint violation: wire {} value is not zero", a.index)
-                ));
+                return Err(Error::SynthesisError("Constraint violation: expected zero".to_string()));
             }
         }
         

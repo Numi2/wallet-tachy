@@ -31,6 +31,7 @@ use halo2curves::ff::Field as Halo2Field;
 
 // Constant-time operations
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
+use zeroize::Zeroize;
 
 // ============================================================================
 // Wrapper for Pallas/Vesta Fields
@@ -99,6 +100,13 @@ impl ConditionallySelectable for PallasField {
     }
 }
 
+impl Zeroize for PallasField {
+    fn zeroize(&mut self) {
+        // PallasFp implements Zeroize via repr bytes clearing is not available; best-effort set to zero
+        self.0 = Halo2Field::ZERO;
+    }
+}
+
 /// Wrapper for halo2curves Vesta base field (Fq)
 /// 
 /// # Security: Constant-Time Operations
@@ -153,6 +161,12 @@ impl ConstantTimeEq for VestaField {
 impl ConditionallySelectable for VestaField {
     fn conditional_select(a: &Self, b: &Self, choice: Choice) -> Self {
         VestaField(VestaFq::conditional_select(&a.0, &b.0, choice))
+    }
+}
+
+impl Zeroize for VestaField {
+    fn zeroize(&mut self) {
+        self.0 = Halo2Field::ZERO;
     }
 }
 
@@ -268,6 +282,12 @@ impl Field for TestField {
     
     fn is_zero(&self) -> bool {
         self.0 == 0
+    }
+}
+
+impl Zeroize for TestField {
+    fn zeroize(&mut self) {
+        self.0 = 0;
     }
 }
 

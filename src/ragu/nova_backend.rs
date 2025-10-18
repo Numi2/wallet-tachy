@@ -328,14 +328,8 @@ impl NovaProver<PallasField> {
         // The actual proving would happen here using Nova's PublicParams
         // and RecursiveSNARK, but requires setting up the full IVC machinery
         
-        // Package the proof data
-        let proof = NovaProof {
-            proof_data: vec![], // Placeholder for serialized RecursiveSNARK
-            public_io: vec![], // Public inputs/outputs
-            num_steps: 1,
-        };
-        
-        Ok(proof)
+        let _ = driver; // suppress unused until full implementation
+        Err(Error::Other("Nova proving not implemented".to_string()))
     }
     
     /// Generate a compressed Nova proof
@@ -346,19 +340,8 @@ impl NovaProver<PallasField> {
         &self,
         driver: &ProverDriver<PallasField>,
     ) -> Result<CompressedNovaProof, Error> {
-        // First generate the recursive proof
-        let recursive_proof = self.prove_single_step(driver)?;
-        
-        // Compress using Spartan
-        // In production: CompressedSNARK::prove(&pp, &recursive_snark)
-        
-        let compressed = CompressedNovaProof {
-            compressed_data: recursive_proof.proof_data,
-            public_io: recursive_proof.public_io,
-            vk_digest: [0u8; 32], // VK digest for fast verification
-        };
-        
-        Ok(compressed)
+        let _ = driver;
+        Err(Error::Other("Nova compressed proving not implemented".to_string()))
     }
     
     /// Prove with full IVC (multiple folding steps)
@@ -372,22 +355,8 @@ impl NovaProver<PallasField> {
         if steps.is_empty() {
             return Err(Error::InvalidWitness("No steps provided".to_string()));
         }
-        
-        // In production implementation:
-        // 1. Initialize RecursiveSNARK with first step
-        // 2. Fold each subsequent step
-        // 3. Serialize final proof
-        
-        let num_steps = steps.len();
-        
-        // Placeholder proof combining all steps
-        let proof = NovaProof {
-            proof_data: vec![],
-            public_io: vec![],
-            num_steps,
-        };
-        
-        Ok(proof)
+        let _ = steps;
+        Err(Error::Other("Nova IVC proving not implemented".to_string()))
     }
 }
 
@@ -404,21 +373,15 @@ impl NovaVerifier {
     /// Verifies that the proof is valid for the given public inputs.
     /// This checks the recursive SNARK verification.
     pub fn verify(proof: &NovaProof, _public_inputs: &[PallasFp]) -> Result<bool, Error> {
-        // Basic sanity checks
         if proof.num_steps == 0 {
             return Err(Error::InvalidPublicInput(
                 "Proof must have at least one step".to_string()
             ));
         }
-        
-        // In production implementation:
-        // 1. Deserialize RecursiveSNARK from proof_data
-        // 2. Verify using Nova's verification algorithm
-        // 3. Check public inputs match
-        
-        // For now, return success for well-formed proofs
-        // This is a placeholder - actual verification requires Nova integration
-        Ok(true)
+        if proof.proof_data.is_empty() {
+            return Err(Error::Other("Nova verification not implemented (empty proof)".to_string()));
+        }
+        Err(Error::Other("Nova verification not implemented".to_string()))
     }
     
     /// Verify a compressed Nova proof
@@ -429,29 +392,13 @@ impl NovaVerifier {
         proof: &CompressedNovaProof,
         public_inputs: &[PallasFp],
     ) -> Result<bool, Error> {
-        // Validate proof structure
         if proof.compressed_data.is_empty() {
-            return Err(Error::Other("Empty proof data".to_string()));
+            return Err(Error::Other("Nova verification not implemented (empty compressed proof)".to_string()));
         }
-        
-        // In production:
-        // 1. Deserialize CompressedSNARK
-        // 2. Verify VK digest matches
-        // 3. Run Spartan verification
-        // 4. Check public I/O consistency
-        
-        // Verify public inputs match what's in the proof
         if proof.public_io.len() != public_inputs.len() * 32 {
-            return Err(Error::InvalidPublicInput(
-                format!(
-                    "Public input size mismatch: expected {}, got {}",
-                    public_inputs.len(),
-                    proof.public_io.len() / 32
-                )
-            ));
+            return Err(Error::InvalidPublicInput("Public input size mismatch".to_string()));
         }
-        
-        Ok(true)
+        Err(Error::Other("Nova compressed verification not implemented".to_string()))
     }
     
     /// Batch verify multiple proofs
@@ -471,10 +418,9 @@ impl NovaVerifier {
         // Verify each proof individually
         // In production, could use batch verification techniques
         for (proof, inputs) in proofs.iter().zip(public_inputs.iter()) {
-            Self::verify_compressed(proof, inputs)?;
+            let _ = Self::verify_compressed(proof, inputs)?;
         }
-        
-        Ok(true)
+        Err(Error::Other("Nova batch verification not implemented".to_string()))
     }
 }
 
